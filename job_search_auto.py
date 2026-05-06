@@ -62,10 +62,10 @@ def fetch_jobs(what: str, where: str, country: str) -> list:
         if resp.status_code == 200:
             return resp.json().get("results", [])
         else:
-            log(f"  ⚠ API error {resp.status_code} for '{what}' in '{where}'")
+            log(f"  !! API error {resp.status_code} for '{what}' in '{where}'")
             return []
     except Exception as e:
-        log(f"  ⚠ Connection error: {e}")
+        log(f"  !! Connection error: {e}")
         return []
 
 
@@ -180,6 +180,16 @@ def run():
     log("=" * 55)
     log("Job Search Auto-Run started")
     log("=" * 55)
+
+    if not APP_ID or not APP_KEY:
+        log("!! No API credentials found. Open the app -> Credentials tab -> Save Credentials.")
+        log("=" * 55 + "\n")
+        return
+
+    if not SEARCHES:
+        log("!! No search configured. Open the app -> Search tab -> click Schedule Daily.")
+        log("=" * 55 + "\n")
+        return
 
     total_added = 0
 

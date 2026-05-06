@@ -11,7 +11,13 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
 # ── Config ────────────────────────────────────────────────────────────────────
-_BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
+def _app_dir() -> str:
+    """Return the folder containing the exe (frozen) or the script (dev)."""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return _app_dir()
+
+_BASE_DIR    = _app_dir()
 _CONFIG_PATH = os.path.join(_BASE_DIR, "config.json")
 
 def _load_config():
@@ -322,7 +328,7 @@ class JobSearchApp(tk.Tk):
     def _refresh_saved_list(self):
         self._saved_files.clear()
         self.file_listbox.delete(0, "end")
-        jobs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jobs")
+        jobs_dir = os.path.join(_app_dir(), "jobs")
         if not os.path.isdir(jobs_dir):
             return
         for root, _, files in os.walk(jobs_dir):
@@ -464,7 +470,7 @@ class JobSearchApp(tk.Tk):
     def _parse_log_history(self):
         """Return list of dicts for each individual search entry in the log (newest first)."""
         import re
-        log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "job_search.log")
+        log_path = os.path.join(_app_dir(), "job_search.log")
         if not os.path.exists(log_path):
             return []
 
@@ -858,7 +864,7 @@ class JobSearchApp(tk.Tk):
 
             job_title = self.what_var.get().strip().replace(" ", "_")
             excel_path = os.path.join(
-                os.path.dirname(os.path.abspath(__file__)), "jobs", job_title,
+                _app_dir(), "jobs", job_title,
                 f"{job_title}.xlsx")
             if not os.path.exists(excel_path):
                 self._export_excel(silent=True)
@@ -891,7 +897,7 @@ class JobSearchApp(tk.Tk):
             return
 
         job_title = self.what_var.get().strip().replace(" ", "_")
-        base_dir  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jobs", job_title)
+        base_dir  = os.path.join(_app_dir(), "jobs", job_title)
         os.makedirs(base_dir, exist_ok=True)
         path = os.path.join(base_dir, f"{job_title}.xlsx")
 
@@ -1013,8 +1019,20 @@ class JobSearchApp(tk.Tk):
             }]
         })
 
-        python_exe  = sys.executable
-        script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "job_search_auto.py")
+        # When running as a frozen .exe, sys.executable is the .exe itself — find Python from PATH
+        if getattr(sys, "frozen", False):
+            import shutil
+            python_exe = shutil.which("python") or shutil.which("python3")
+            if not python_exe:
+                messagebox.showerror("Python not found",
+                    "Could not find Python in your system PATH.\n\n"
+                    "Please install Python and make sure it is added to PATH,\n"
+                    "then try again.")
+                return
+        else:
+            python_exe = sys.executable
+
+        script_path = os.path.join(_app_dir(), "job_search_auto.py")
         task_name   = "JobSearchDaily"
 
         if not os.path.exists(script_path):
@@ -1023,35 +1041,34 @@ class JobSearchApp(tk.Tk):
                                  "Please place job_search_auto.py in the same folder.")
             return
 
-        cmd = (f'schtasks /create /f /tn "{task_name}" '
-               f'/tr "\\"{python_exe}\\" \\"{script_path}\\"" '
-               f'/sc daily /st {hour.zfill(2)}:{minute.zfill(2)} '
-               f'/ru "{os.environ.get("USERNAME", "")}" /rl limited')
+        ps_script = f"""
+$action  = New-ScheduledTaskAction -Execute '"{python_exe}"' -Argument '"{script_path}"'
+$trigger = New-ScheduledTaskTrigger -Daily -At '{hour.zfill(2)}:{minute.zfill(2)}'
+$settings = New-ScheduledTaskSettingsSet `
+    -AllowStartIfOnBatteries `
+    -DontStopIfGoingOnBatteries `
+    -StartWhenAvailable `
+    -ExecutionTimeLimit (New-TimeSpan -Hours 1)
+Register-ScheduledTask -TaskName '{task_name}' -Action $action -Trigger $trigger `
+    -Settings $settings -Force | Out-Null
+"""
+        result = subprocess.run(
+            ["powershell", "-NonInteractive", "-Command", ps_script],
+            capture_output=True, text=True)
 
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
         if result.returncode == 0:
             self._set_status(f"✓ Scheduled daily at {hour.zfill(2)}:{minute.zfill(2)}")
-            messagebox.showinfo("✓ Scheduled",
+            messagebox.showinfo("Scheduled",
                 f"Daily auto-run set for {hour.zfill(2)}:{minute.zfill(2)}\n\n"
-                f"Task name: {task_name}\nScript: job_search_auto.py\n\n"
-                "To remove: click '✕ Remove Schedule'")
+                f"Runs every day — even on battery.\n"
+                f"Task name: {task_name}\n\n"
+                "To remove: click 'Remove Schedule'.")
         else:
-            # Fallback without /ru
-            cmd2 = (f'schtasks /create /f /tn "{task_name}" '
-                    f'/tr "\\"{python_exe}\\" \\"{script_path}\\"" '
-                    f'/sc daily /st {hour.zfill(2)}:{minute.zfill(2)}')
-            result2 = subprocess.run(cmd2, shell=True, capture_output=True, text=True)
-            if result2.returncode == 0:
-                self._set_status(f"✓ Scheduled daily at {hour.zfill(2)}:{minute.zfill(2)}")
-                messagebox.showinfo("✓ Scheduled",
-                    f"Daily auto-run set for {hour.zfill(2)}:{minute.zfill(2)}\n\n"
-                    "To remove: click '✕ Remove Schedule'")
-            else:
-                self._set_status("⚠ Scheduling failed — try Run as Administrator", ok=False)
-                messagebox.showerror("Access Denied",
-                    "Windows blocked the scheduler.\n\n"
-                    "Fix: Right-click job_search_3.py → 'Run as administrator'\n"
-                    "then click ⏱ Schedule Daily again.")
+            self._set_status("Scheduling failed — try Run as Administrator", ok=False)
+            messagebox.showerror("Error",
+                f"Could not create the scheduled task.\n\n"
+                f"{result.stderr.strip()}\n\n"
+                "Try right-clicking the app and selecting 'Run as administrator'.")
 
     # ── Remove Scheduled Task ─────────────────────────────────────────────────
     def _unschedule(self):
