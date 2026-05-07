@@ -1,5 +1,5 @@
 #define AppName      "Job Search Tool"
-#define AppVersion   "1.0"
+#define AppVersion   "1.0.1"
 #define AppPublisher "Todor Vankov"
 #define AppURL       "https://www.todorvankov.com"
 #define AppExeName   "JobSearchTool.exe"

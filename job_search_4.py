@@ -15,7 +15,7 @@ def _app_dir() -> str:
     """Return the folder containing the exe (frozen) or the script (dev)."""
     if getattr(sys, "frozen", False):
         return os.path.dirname(sys.executable)
-    return _app_dir()
+    return os.path.dirname(os.path.abspath(__file__))
 
 _BASE_DIR    = _app_dir()
 _CONFIG_PATH = os.path.join(_BASE_DIR, "config.json")
@@ -734,7 +734,7 @@ class JobSearchApp(tk.Tk):
         # Logo / App name
         tk.Label(center, text="Job Search Tool", bg=BG, fg=TEXT,
                  font=("Segoe UI", 26, "bold")).pack(pady=(0, 4))
-        tk.Label(center, text="Version 1.0", bg=BG, fg=SUBTEXT,
+        tk.Label(center, text="Version 1.0.1", bg=BG, fg=SUBTEXT,
                  font=("Segoe UI", 10)).pack(pady=(0, 24))
 
         # Divider
