@@ -6,6 +6,8 @@ A desktop app for searching and automatically collecting job listings — built 
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey)
 
+<img width="500" src="https://github.com/user-attachments/assets/2eeae17b-4e08-4f00-b656-aeb286150765" />
+
 ---
 
 ## Features
@@ -21,11 +23,18 @@ A desktop app for searching and automatically collecting job listings — built 
 
 ---
 
+| | | |
+|---|---|---|
+| <img width="400" src="https://github.com/user-attachments/assets/c0bfcce2-531d-4bb2-ae16-18e13419fb2b" /> | <img width="400" src="https://github.com/user-attachments/assets/9e5075f9-8860-4e25-bd0b-59e3e180638c" /> | <img width="400" src="https://github.com/user-attachments/assets/8e617389-0e59-4272-917d-fd674e54f231" /> |
+
+---
+
+
 ## Requirements
 
 - Python 3.8 or higher
 - A free Adzuna API account → [developer.adzuna.com](https://developer.adzuna.com)
-
+  
 ---
 
 ## Installation
