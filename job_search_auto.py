@@ -30,7 +30,7 @@ _cfg = _load_config()
 APP_ID           = _cfg.get("app_id",  "")
 APP_KEY          = _cfg.get("app_key", "")
 SEARCHES         = _cfg.get("searches", [])
-RESULTS_PER_PAGE = 20
+RESULTS_PER_PAGE = 50
 # ─────────────────────────────────────────────────────────────────────────────
 
 BASE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jobs")
