@@ -31,18 +31,15 @@ A desktop app for searching, collecting and analysing job listings — built wit
 
 | | | |
 |---|---|---|
-| <img width="400" src="https://github.com/user-attachments/assets/c0bfcce2-531d-4bb2-ae16-18e13419fb2b" /> | <img width="400" src="https://github.com/user-attachments/assets/9e5075f9-8860-4e25-bd0b-59e3e180638c" /> | <img width="400" src="https://github.com/user-attachments/assets/8e617389-0e59-4272-917d-fd674e54f231" /> |
+| <img width="1223" alt="grafik" src="https://github.com/user-attachments/assets/a3732027-529c-46b6-8bc5-39a313882a14" /> | <img width="1225" alt="grafik" src="https://github.com/user-attachments/assets/2dd47599-7cef-49f3-ae68-799d6dbf8225" /> | <img width="1222" alt="grafik" src="https://github.com/user-attachments/assets/d502724b-6cc7-45af-be6d-db96f20eba95" /> |
 
 | | | |
 |---|---|---|
-| <img width="400" src="https://github.com/user-attachments/assets/c0bfcce2-531d-4bb2-ae16-18e13419fb2b" /> | <img width="400" src="https://github.com/user-attachments/assets/9e5075f9-8860-4e25-bd0b-59e3e180638c" /> | <img width="400" src="https://github.com/user-attachments/assets/8e617389-0e59-4272-917d-fd674e54f231" /> |
+| <img width="400" alt="grafik" src="https://github.com/user-attachments/assets/edceb730-e3d7-4d17-b99e-d3671aa91e27" /> | <img width="400" alt="grafik" src="https://github.com/user-attachments/assets/83f718ef-6e4c-4e11-8c9f-3a1bea400f51" /> | <img width="400" alt="grafik" src="https://github.com/user-attachments/assets/4b12e5e5-6217-4c8f-8e1f-2809d4d614a3" /> |
 
 | | | |
 |---|---|---|
 | <img width="400" alt="grafik" src="https://github.com/user-attachments/assets/2a7aafaf-be72-443d-b319-3b1c65fdaf1b" /> | <img width="400"  alt="grafik" src="https://github.com/user-attachments/assets/8fb4064d-7896-4171-b007-044f30588dbc" /> | <img width="400"  alt="grafik" src="https://github.com/user-attachments/assets/880ea6df-1b0c-4a1c-9fe5-2a1d9abf6a66" />|
-
-
-
 
 
 ---
