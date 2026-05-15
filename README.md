@@ -1,7 +1,8 @@
 # Job Search Tool
 
-A desktop app for searching and automatically collecting job listings — built with Python and the Adzuna API.
+A desktop app for searching, collecting and analysing job listings — built with Python and Tkinter.
 
+![Version](https://img.shields.io/badge/Version-1.0.1-blue)
 ![Python](https://img.shields.io/badge/Python-3.8+-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey)
@@ -12,14 +13,17 @@ A desktop app for searching and automatically collecting job listings — built 
 
 ## Features
 
-- **Live job search** — search by job title, location, country, salary range and more
-- **19 countries supported** — Germany, USA, UK, Austria, Switzerland, France, Australia and more
-- **Auto save to Excel** — results are saved automatically on first search, duplicates skipped
-- **Saved Results browser** — view and manage all your saved Excel files inside the app
-- **Daily Auto Run** — schedule the scraper to run every day via Windows Task Scheduler
-- **Search history** — see the last 30 auto-runs with date, time and job counts
-- **Persistent credentials** — your API keys are saved locally in `config.json`
-- **Dark UI** — clean, modern dark theme built with Tkinter
+- **12 job providers** — search across Adzuna, Reed, Findwork, Jooble, HeadHunter, Arbeitnow, Bundesagentur, The Muse, RemoteOK, WeWorkRemotely, Remotive and Himalayas simultaneously
+- **Provider chips** — enable/disable providers with one click; selection is saved between sessions
+- **Live job search** — filter by job title, location, country, salary range, remote-only and more
+- **Auto-enable on save** — entering an API key and clicking Save Credentials automatically activates that provider
+- **Auto save to Excel** — results saved on first search, duplicates skipped
+- **Saved Results browser** — view and manage all saved Excel files inside the app
+- **Analytics tab** — charts and statistics over your saved results
+- **Daily Auto Run** — schedule the scraper via Windows Task Scheduler; runs even on battery
+- **Update check** — the app checks GitHub for new versions on startup
+- **Bug reporting** — errors are logged to `error.log`; Report Bug dialog opens it directly
+- **Fully dark UI** — consistent dark theme across all controls (tables, dropdowns, scrollbars)
 
 ---
 
@@ -29,19 +33,38 @@ A desktop app for searching and automatically collecting job listings — built 
 
 ---
 
+## Supported providers
 
-## Requirements
+| Provider | Key required | Coverage |
+|---|---|---|
+| **Adzuna** | Yes (free) | 19 countries |
+| **Reed** | Yes (free) | UK |
+| **Findwork** | Yes (free) | Tech / Remote |
+| **Jooble** | Yes (free) | 70+ countries |
+| **HeadHunter** | Yes (free) | Russia / CIS |
+| **Bundesagentur** | No | Germany |
+| **Arbeitnow** | No | Europe |
+| **The Muse** | No | USA |
+| **RemoteOK** | No | Remote |
+| **WeWorkRemotely** | No | Remote |
+| **Remotive** | No | Remote |
+| **Himalayas** | No | Remote |
 
-- Python 3.8 or higher
-- A free Adzuna API account → [developer.adzuna.com](https://developer.adzuna.com)
-  
+> RemoteOK and WeWorkRemotely use public RSS feeds — for personal use only.
+
 ---
 
 ## Installation
 
+### Option A — Windows Installer (recommended)
+
+Download `JobSearchTool_Setup_v1.0.1.exe` from the [Releases page](https://github.com/tvankov/job-search-tool/releases/latest) and run it. No Python required.
+
+### Option B — Run from source
+
 ```bash
 # 1. Clone the repository
-git clone https://github.com/YOUR_USERNAME/job-search-tool.git
+git clone https://github.com/tvankov/job-search-tool.git
 cd job-search-tool
 
 # 2. Install dependencies
@@ -53,12 +76,17 @@ python job_search_4.py
 
 ---
 
-## Getting your free API credentials
+## Getting API keys
 
-1. Go to [developer.adzuna.com](https://developer.adzuna.com) and register
-2. Create a new application (any name)
-3. Copy your **App ID** and **App Key**
-4. Open the app → go to the **Credentials** tab → paste them in and click **Save Credentials**
+All keys are free. Enter them in the **Credentials** tab — the provider chip turns green automatically when a key is saved.
+
+| Provider | Where to get the key |
+|---|---|
+| **Adzuna** | [developer.adzuna.com](https://developer.adzuna.com) — register, create an app, copy App ID + App Key |
+| **Reed** | [reed.co.uk/developers](https://www.reed.co.uk/developers/jobseeker) — register, copy API Key |
+| **Findwork** | [findwork.dev/api-token-auth](https://findwork.dev/api-token-auth/) — register, copy token |
+| **Jooble** | [jooble.org/api](https://jooble.org/api/about) — request a key by email |
+| **HeadHunter** | [dev.hh.ru](https://dev.hh.ru) — create an app, complete OAuth flow, copy access token |
 
 ---
 
@@ -66,12 +94,13 @@ python job_search_4.py
 
 | Tab | Description |
 |---|---|
-| **Search** | Search for jobs live. Double-click a row to open the listing. |
-| **Saved Results** | Browse all saved Excel files. Click to view contents, delete if not needed. |
-| **Auto Run** | Schedule a daily search. Uses the last Job Title and Location you searched. |
-| **Credentials** | Enter and save your Adzuna API keys. |
+| **Search** | Search jobs live. Toggle provider chips on/off. Double-click a row to open the listing. |
+| **Saved Results** | Browse all saved Excel files. Click a file to view its jobs. |
+| **Auto Run** | Schedule a daily search and view run history. |
+| **Analytics** | Charts and statistics over your saved results. |
+| **Credentials** | Enter API keys. Saving a key automatically enables that provider. |
 | **Help** | Step-by-step guide and FAQ. |
-| **About** | App info and links. |
+| **About** | App version and links. |
 
 ---
 
@@ -79,22 +108,42 @@ python job_search_4.py
 
 ```
 job-search-tool/
-├── job_search_4.py      # Main GUI app
-├── job_search_auto.py   # Headless runner for Task Scheduler
+├── job_search_4.py        # Main GUI app
+├── job_search_auto.py     # Headless runner for Task Scheduler
+├── version.json           # Version info for update check
+├── providers/             # One module per job provider
+│   ├── base.py
+│   ├── adzuna.py
+│   ├── reed.py
+│   ├── findwork.py
+│   ├── jooble.py
+│   ├── headhunter.py
+│   ├── arbeitnow.py
+│   ├── bundesagentur.py
+│   ├── themuse.py
+│   ├── remoteok.py
+│   ├── weworkremotely.py
+│   ├── remotive.py
+│   └── himalayas.py
 ├── requirements.txt
+├── installer.iss          # Inno Setup script
 ├── README.md
 └── .gitignore
 ```
 
-> `config.json` and the `jobs/` folder are created automatically on first use and are excluded from version control.
+> `config.json`, the `jobs/` folder and `error.log` are created automatically on first use and are excluded from version control.
 
 ---
 
 ## Built with
 
-- [Python](https://python.org) + Tkinter
+- [Python](https://python.org) + Tkinter — GUI
+- [requests](https://docs.python-requests.org) — API calls
 - [openpyxl](https://openpyxl.readthedocs.io) — Excel export
-- [Adzuna API](https://developer.adzuna.com) — job data
+- [matplotlib](https://matplotlib.org) — Analytics charts
+- [lxml](https://lxml.de) — RSS feed parsing
+- [PyInstaller](https://pyinstaller.org) — Windows executable
+- [Inno Setup](https://jrsoftware.org/isinfo.php) — Windows installer
 
 ---
 
