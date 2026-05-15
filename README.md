@@ -7,7 +7,9 @@ A desktop app for searching, collecting and analysing job listings — built wit
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey)
 
-<img width="500" src="https://github.com/user-attachments/assets/2eeae17b-4e08-4f00-b656-aeb286150765" />
+<center>
+<img width="500" alt="grafik" src="https://github.com/user-attachments/assets/2ff96dfb-173f-427a-92ba-a6c22a1ebb48" />
+</center>
 
 ---
 
