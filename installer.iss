@@ -34,6 +34,7 @@ Name: "startmenuicon"; Description: "Create a Start Menu shortcut"
 [Files]
 Source: "dist\{#AppExeName}";   DestDir: "{app}"; Flags: ignoreversion
 Source: "job_search_auto.py";   DestDir: "{app}"; Flags: ignoreversion
+Source: "version.json";         DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#AppName}";           Filename: "{app}\{#AppExeName}"
@@ -48,3 +49,4 @@ Filename: "{app}\{#AppExeName}"; Description: "Launch {#AppName}"; Flags: nowait
 Type: filesandordirs; Name: "{app}\jobs"
 Type: files;          Name: "{app}\config.json"
 Type: files;          Name: "{app}\job_search.log"
+Type: files;          Name: "{app}\error.log"

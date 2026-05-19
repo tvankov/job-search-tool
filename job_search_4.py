@@ -522,11 +522,11 @@ class JobSearchApp(tk.Tk):
             ON_NOTE  = "#bae6fd"
             OFF_NOTE = "#93c5b8"
             DIS_NOTE = "#374151"
-            dot_color = SUCCESS if ready else "#64748b"
+            _dot_color = [SUCCESS if ready else "#64748b"]
             _supported = [True]
 
             chip = tk.Frame(parent, bg=OFF_BG, padx=padx, pady=4, cursor="hand2")
-            dot_lbl  = tk.Label(chip, text="⬤", bg=OFF_BG, fg=dot_color,
+            dot_lbl  = tk.Label(chip, text="⬤", bg=OFF_BG, fg=_dot_color[0],
                                 font=("Segoe UI", 6), cursor="hand2")
             name_lbl = tk.Label(chip, text=label, bg=OFF_BG,
                                 font=("Segoe UI", 9, "bold"), cursor="hand2")
@@ -543,7 +543,7 @@ class JobSearchApp(tk.Tk):
                 fg  = "white" if var.get() else SUBTEXT
                 nfg = ON_NOTE if var.get() else OFF_NOTE
                 chip.config(bg=bg, cursor="hand2")
-                dot_lbl.config(bg=bg, cursor="hand2")
+                dot_lbl.config(bg=bg, fg=_dot_color[0], cursor="hand2")
                 name_lbl.config(bg=bg, fg=fg, cursor="hand2")
                 note_lbl.config(bg=bg, fg=nfg, cursor="hand2")
 
@@ -572,9 +572,13 @@ class JobSearchApp(tk.Tk):
                         w.config(bg=DIS_BG, cursor="arrow")
                     name_lbl.config(fg=DIS_NOTE)
                     note_lbl.config(fg=DIS_NOTE)
-                    dot_lbl.config(fg=dot_color)  # keep credential dot color
+                    dot_lbl.config(fg=_dot_color[0])
                 else:
                     refresh()
+
+            def set_dot_ready(is_ready: bool):
+                _dot_color[0] = SUCCESS if is_ready else "#64748b"
+                dot_lbl.config(fg=_dot_color[0])
 
             for w in (chip, dot_lbl, name_lbl, note_lbl):
                 w.bind("<Button-1>", toggle)
@@ -582,7 +586,7 @@ class JobSearchApp(tk.Tk):
                 w.bind("<Leave>",    on_leave)
 
             refresh()
-            self._chip_info.append((label, var, set_supported))
+            self._chip_info.append((label, var, set_supported, refresh, set_dot_ready))
             return chip
 
         # ── Advanced Filters (collapsible) ────────────────────────────────────
@@ -655,7 +659,7 @@ class JobSearchApp(tk.Tk):
 
     def _update_chips_for_country(self):
         code = COUNTRIES.get(self.country_var.get(), "")
-        for label, var, set_supported in self._chip_info:
+        for label, var, set_supported, *_rest in self._chip_info:
             allowed = PROVIDER_COUNTRIES.get(label)
             supported = allowed is None or code in allowed
             set_supported(supported)
@@ -892,7 +896,7 @@ class JobSearchApp(tk.Tk):
             for s in searches
         )
         if already:
-            messagebox.showinfo("Auto Run", f'"{label}" is already in Auto Run.')
+            self._switch_tab(2)
             return
         what = where = country = ""
         try:
@@ -912,8 +916,7 @@ class JobSearchApp(tk.Tk):
             what = file_slug.replace("_", " ")
         searches.append({"what": what, "where": where, "country": country or "de"})
         _save_config({"searches": searches})
-        self._autorun_refresh()
-        messagebox.showinfo("Auto Run", f'"{label}" added to Auto Run.')
+        self._switch_tab(2)
 
     def _delete_saved_file(self):
         sel = self.file_listbox.selection()
@@ -1030,17 +1033,26 @@ class JobSearchApp(tk.Tk):
 
         searches_hdr = tk.Frame(outer, bg=BG)
         searches_hdr.pack(fill="x", pady=(12, 6))
+
         tk.Label(searches_hdr, text="Searches to run", bg=BG, fg=ACCENT2,
                  font=("Segoe UI", 11, "bold")).pack(side="left")
+
+        # Remove button + add form — right-aligned, same row
         self._btn(searches_hdr, "Remove Selected", self._autorun_remove,
-                  color="#7f1d1d", w=16).pack(side="right", padx=(6, 0))
-        self._btn(searches_hdr, "Add from Search Tab",
-                  self._autorun_add_current, color="#334155", w=20).pack(side="right")
+                  color="#7f1d1d", w=16).pack(side="right", padx=(8, 0))
+
+        self.run_what_var    = tk.StringVar()
+        self.run_where_var   = tk.StringVar()
+        self.run_country_var = tk.StringVar(value="Germany")
+
+        self.run_what_var    = tk.StringVar()
+        self.run_where_var   = tk.StringVar()
+        self.run_country_var = tk.StringVar(value="Germany")
 
         # Treeview
         s_cols = ("what", "where", "country", "file")
         self.runs_tree = ttk.Treeview(outer, columns=s_cols, show="headings",
-                                      selectmode="browse", height=5, style="Treeview")
+                                      selectmode="browse", height=12, style="Treeview")
         self._runs_col_labels = {
             "what":    "Job Title",
             "where":   "Location",
@@ -1064,70 +1076,10 @@ class JobSearchApp(tk.Tk):
         runs_sb = ttk.Scrollbar(outer, orient="vertical", command=self.runs_tree.yview)
         self.runs_tree.configure(yscrollcommand=runs_sb.set)
         runs_sb.pack(side="right", fill="y")
-        self.runs_tree.pack(fill="x", pady=(0, 6))
-
-        # Add form + Remove button
-        add_row = tk.Frame(outer, bg=BG)
-        add_row.pack(fill="x", pady=(0, 4))
-
-        tk.Label(add_row, text="Job Title", bg=BG, fg=SUBTEXT,
-                 font=("Segoe UI", 8)).grid(row=0, column=0, sticky="w")
-        tk.Label(add_row, text="Location", bg=BG, fg=SUBTEXT,
-                 font=("Segoe UI", 8)).grid(row=0, column=1, sticky="w", padx=(8, 0))
-        tk.Label(add_row, text="Country", bg=BG, fg=SUBTEXT,
-                 font=("Segoe UI", 8)).grid(row=0, column=2, sticky="w", padx=(8, 0))
-
-        self.run_what_var  = tk.StringVar()
-        self.run_where_var = tk.StringVar()
-        self.run_country_var = tk.StringVar(value="Germany")
-
-        tk.Entry(add_row, textvariable=self.run_what_var, bg=PANEL, fg=TEXT,
-                 insertbackground=TEXT, relief="flat", font=("Segoe UI", 10),
-                 width=22).grid(row=1, column=0, ipady=5)
-        tk.Entry(add_row, textvariable=self.run_where_var, bg=PANEL, fg=TEXT,
-                 insertbackground=TEXT, relief="flat", font=("Segoe UI", 10),
-                 width=18).grid(row=1, column=1, ipady=5, padx=(8, 0))
-        ttk.Combobox(add_row, textvariable=self.run_country_var,
-                     values=list(COUNTRIES.keys()), width=14,
-                     state="readonly").grid(row=1, column=2, ipady=3, padx=(8, 0))
-        self._btn(add_row, "Add", self._autorun_add, w=6
-                  ).grid(row=1, column=3, padx=(10, 0))
+        self.runs_tree.pack(fill="both", expand=True, pady=(0, 6))
 
         self._autorun_refresh()
 
-        # ── Search History ────────────────────────────────────────────────────
-        tk.Frame(outer, bg=BORDER, height=1).pack(fill="x", pady=(16, 0))
-
-        hist_header = tk.Frame(outer, bg=BG)
-        hist_header.pack(fill="x", pady=(12, 6))
-        tk.Label(hist_header, text="Search History  (last 30)", bg=BG, fg=ACCENT2,
-                 font=("Segoe UI", 11, "bold")).pack(side="left")
-        self._btn(hist_header, "Refresh", self._refresh_history,
-                  color="#334155", w=10).pack(side="right")
-
-        hist_cols = ("datetime", "query", "location", "fetched", "new", "skipped")
-        self.hist_tree = ttk.Treeview(outer, columns=hist_cols, show="headings",
-                                      selectmode="none", height=8, style="Treeview")
-        for col, (label, width) in {
-            "datetime": ("Date / Time",  140),
-            "query":    ("Search",       160),
-            "location": ("Location",     110),
-            "fetched":  ("Fetched",       70),
-            "new":      ("New",           60),
-            "skipped":  ("Skipped",       70),
-        }.items():
-            self.hist_tree.heading(col, text=label)
-            self.hist_tree.column(col, width=width, anchor="w")
-
-        self.hist_tree.tag_configure("odd",  background=ROW_ODD)
-        self.hist_tree.tag_configure("even", background=ROW_EVEN)
-
-        hist_sb = ttk.Scrollbar(outer, orient="vertical", command=self.hist_tree.yview)
-        self.hist_tree.configure(yscrollcommand=hist_sb.set)
-        hist_sb.pack(side="right", fill="y")
-        self.hist_tree.pack(fill="both", expand=True, pady=(0, 10))
-
-        self._refresh_history()
 
     # ── Auto Run helpers ──────────────────────────────────────────────────────
     def _refresh_sched_status(self):
@@ -1254,19 +1206,6 @@ class JobSearchApp(tk.Tk):
                                   tags=("odd" if i % 2 else "even",),
                                   values=(what, s.get("where", ""), country_name, file_path))
 
-    def _autorun_add(self):
-        what    = self.run_what_var.get().strip()
-        where   = self.run_where_var.get().strip()
-        country = COUNTRIES.get(self.run_country_var.get(), "de")
-        if not what:
-            return
-        cfg      = _load_config()
-        searches = cfg.get("searches", [])
-        searches.append({"what": what, "where": where, "country": country})
-        _save_config({"searches": searches})
-        self.run_what_var.set("")
-        self.run_where_var.set("")
-        self._autorun_refresh()
 
     def _autorun_add_current(self):
         what    = self.what_var.get().strip()
@@ -1338,14 +1277,6 @@ class JobSearchApp(tk.Tk):
             entries.append(pending)
         return list(reversed(entries))
 
-    def _refresh_history(self):
-        for row in self.hist_tree.get_children():
-            self.hist_tree.delete(row)
-        entries = self._parse_log_history()[:30]
-        for i, e in enumerate(entries):
-            self.hist_tree.insert("", "end", tags=("odd" if i % 2 else "even",),
-                                  values=(e["datetime"], e["query"], e["location"],
-                                          e["fetched"], e["new"], e["skipped"]))
 
     def _on_tab_change(self, idx=None):
         if idx is None:
@@ -1358,7 +1289,6 @@ class JobSearchApp(tk.Tk):
             self._refresh_saved_list()
         elif idx == 2:
             self._autorun_refresh()
-            self._refresh_history()
         elif idx == 3:
             self._analytics_populate_files()
 
@@ -2747,6 +2677,25 @@ class JobSearchApp(tk.Tk):
                         self.fw_status, self.jooble_status,
                         self.hh_status):
                 lbl.config(text=msg, fg=SUCCESS)
+            # Auto-enable provider chips for filled credentials
+            key_map = {
+                "Adzuna":     (bool(new_id and new_key),                          self.use_adzuna),
+                "Reed":       (bool(self.reed_key_var.get().strip()),              self.use_reed),
+                "Findwork":   (bool(self.findwork_key_var.get().strip()),          self.use_findwork),
+                "Jooble":     (bool(self.jooble_key_var.get().strip()),            self.use_jooble),
+                "HeadHunter": (bool(self.hh_token_var.get().strip()),              self.use_headhunter),
+            }
+            changed = False
+            for label, var, set_supported, refresh_fn, set_dot_fn in self._chip_info:
+                if label in key_map:
+                    has_key, use_var = key_map[label]
+                    set_dot_fn(has_key)          # dot grün wenn Key vorhanden
+                    if has_key and not use_var.get():
+                        use_var.set(True)
+                        refresh_fn()
+                        changed = True
+            if changed:
+                self._save_provider_state()
         except Exception as e:
             err = f"Session only (file error: {e})"
             for lbl in (self.cred_status, self.reed_status,
@@ -3643,7 +3592,7 @@ Register-ScheduledTask -TaskName '{task_name}' -Action $action -Trigger $trigger
                 "You can re-schedule anytime with ⏱ Schedule Daily.")
         else:
             err = result.stderr.strip().lower()
-            if "cannot find" in err or "nicht gefunden" in err:
+            if "cannot find" in err or "nicht gefunden" in err or "nicht finden" in err or "does not exist" in err or "existiert nicht" in err or result.returncode == 1:
                 self._set_status("⚠ No active schedule found", ok=False)
                 messagebox.showwarning("Not found",
                     f"No task named '{task_name}' was found.\n"
