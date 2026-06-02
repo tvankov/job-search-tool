@@ -70,10 +70,13 @@ def fetch_jobs(what: str, where: str, country: str) -> list:
 
 
 def save_to_excel(jobs: list, job_title: str, search_info: dict):
-    """Append new jobs to the persistent Excel file for this job title."""
-    folder    = os.path.join(BASE_DIR, job_title.replace(" ", "_"))
+    """Append new jobs to the persistent Excel file for this job title + location."""
+    where = search_info.get("where", "").strip()
+    label = f"{job_title} {where}".strip() if where else job_title
+    safe  = label.replace(" ", "_")
+    folder    = os.path.join(BASE_DIR, safe)
     os.makedirs(folder, exist_ok=True)
-    path      = os.path.join(folder, f"{job_title.replace(' ', '_')}.xlsx")
+    path      = os.path.join(folder, f"{safe}.xlsx")
 
     headers   = ["Title", "Company", "Location",
                  "Salary Min (€)", "Salary Max (€)", "Posted",
