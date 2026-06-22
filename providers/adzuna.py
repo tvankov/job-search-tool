@@ -4,14 +4,12 @@ from .base import BaseProvider, AuthError
 
 class AdzunaProvider(BaseProvider):
     name = "Adzuna"
-    _URL = "https://api.adzuna.com/v1/api/jobs/{country}/search/1"
+    _URL = "https://api.adzuna.com/v1/api/jobs/{country}/search/{page}"
+    _PAGE_SIZE = 50  # Adzuna API hard limit per page
 
     def __init__(self, app_id: str, app_key: str):
         self.app_id  = app_id
         self.app_key = app_key
-
-    _PAGE_SIZE = 50  # Adzuna API hard limit per page
-    _URL = "https://api.adzuna.com/v1/api/jobs/{country}/search/{page}"
 
     def search(self, what, where, country="de", results=20,
                sort_by="date", salary_min=None, salary_max=None,

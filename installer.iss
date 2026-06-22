@@ -32,9 +32,10 @@ Name: "desktopicon";   Description: "Create a desktop shortcut"
 Name: "startmenuicon"; Description: "Create a Start Menu shortcut"
 
 [Files]
-Source: "dist\{#AppExeName}";   DestDir: "{app}"; Flags: ignoreversion
-Source: "job_search_auto.py";   DestDir: "{app}"; Flags: ignoreversion
-Source: "version.json";         DestDir: "{app}"; Flags: ignoreversion
+Source: "dist\{#AppExeName}";      DestDir: "{app}";             Flags: ignoreversion
+Source: "job_search_auto.py";      DestDir: "{app}";             Flags: ignoreversion
+Source: "version.json";            DestDir: "{app}";             Flags: ignoreversion
+Source: "providers\*";             DestDir: "{app}\providers";   Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#AppName}";           Filename: "{app}\{#AppExeName}"

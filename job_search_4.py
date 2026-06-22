@@ -7,6 +7,7 @@ import json
 import subprocess
 import traceback
 import threading
+import webbrowser
 from datetime import datetime
 from collections import Counter, defaultdict
 import matplotlib
@@ -463,7 +464,8 @@ class JobSearchApp(tk.Tk):
 
         btns = tk.Frame(row1, bg=PANEL)
         btns.pack(side="right", anchor="s")
-        self._btn(btns, "🔍  Search", self._search, w=13).pack(side="left", padx=(0, 6))
+        self._search_btn = self._btn(btns, "🔍  Search", self._search, w=13)
+        self._search_btn.pack(side="left", padx=(0, 6))
         self._btn(btns, "💾  Save", self._export_excel, color="#0f766e", w=13).pack(side="left", padx=(0, 6))
         self._adv_btn_ref = self._btn(btns, "⚙  Filters ▾", lambda: self._toggle_advanced(), color="#334155", w=11)
         self._adv_btn_ref.pack(side="left")
@@ -956,7 +958,7 @@ class JobSearchApp(tk.Tk):
         if sel:
             url = self.saved_tree.item(sel[0])["values"][6]
             if url:
-                __import__("webbrowser").open(str(url))
+                webbrowser.open(str(url))
 
     # ── Auto Run Panel ────────────────────────────────────────────────────────
     def _settings_panel(self):
@@ -1079,6 +1081,9 @@ class JobSearchApp(tk.Tk):
 
     # ── Auto Run helpers ──────────────────────────────────────────────────────
     def _refresh_sched_status(self):
+        if sys.platform != "win32":
+            self.sched_active_lbl.config(text="⬤  Not supported on this OS", fg=SUBTEXT)
+            return
         try:
             result = subprocess.run(
                 ["schtasks", "/query", "/tn", "JobSearchDaily", "/fo", "LIST"],
@@ -2350,7 +2355,7 @@ class JobSearchApp(tk.Tk):
                            font=("Segoe UI", 9, "underline"), cursor="hand2")
         lnk_az.pack(side="left")
         lnk_az.bind("<Button-1>",
-                    lambda e: __import__("webbrowser").open("https://developer.adzuna.com"))
+                    lambda e: webbrowser.open("https://developer.adzuna.com"))
 
         az_countries = (
             "Australia · Austria · Belgium · Brazil · Canada · France · Germany · India · Italy · "
@@ -2422,7 +2427,7 @@ class JobSearchApp(tk.Tk):
                                font=("Segoe UI", 9, "underline"), cursor="hand2")
         lnk_rd_top.pack(side="left")
         lnk_rd_top.bind("<Button-1>",
-                        lambda e: __import__("webbrowser").open("https://www.reed.co.uk/developers"))
+                        lambda e: webbrowser.open("https://www.reed.co.uk/developers"))
         tk.Label(rd_left, text="Countries (1):  United Kingdom",
                  bg=PANEL, fg=SUBTEXT, font=("Segoe UI", 9)).pack(anchor="w", padx=20, pady=(0, 16))
 
@@ -2479,7 +2484,7 @@ class JobSearchApp(tk.Tk):
                                font=("Segoe UI", 9, "underline"), cursor="hand2")
         lnk_fw_top.pack(side="left")
         lnk_fw_top.bind("<Button-1>",
-                        lambda e: __import__("webbrowser").open("https://findwork.dev/developers/"))
+                        lambda e: webbrowser.open("https://findwork.dev/developers/"))
         tk.Label(fw_left, text="Coverage:  Tech & remote jobs globally — aggregated from HN, RemoteOK, WeWorkRemotely & more.",
                  bg=PANEL, fg=SUBTEXT, font=("Segoe UI", 9),
                  wraplength=400, justify="left").pack(anchor="w", padx=20, pady=(0, 16))
@@ -2533,7 +2538,7 @@ class JobSearchApp(tk.Tk):
                                font=("Segoe UI", 9, "underline"), cursor="hand2")
         lnk_jb_top.pack(side="left")
         lnk_jb_top.bind("<Button-1>",
-                        lambda e: __import__("webbrowser").open("https://jooble.org/api/about"))
+                        lambda e: webbrowser.open("https://jooble.org/api/about"))
         jb_countries = (
             "Argentina · Australia · Austria · Belgium · Brazil · Canada · Chile · "
             "Colombia · Czech Republic · Denmark · Finland · France · Germany · Greece · "
@@ -2596,7 +2601,7 @@ class JobSearchApp(tk.Tk):
                                font=("Segoe UI", 9, "underline"), cursor="hand2")
         lnk_hh_top.pack(side="left")
         lnk_hh_top.bind("<Button-1>",
-                        lambda e: __import__("webbrowser").open("https://dev.hh.ru"))
+                        lambda e: webbrowser.open("https://dev.hh.ru"))
         tk.Label(hh_left, text="Countries:  Russia 🇷🇺  Kazakhstan 🇰🇿  Belarus 🇧🇾  Ukraine 🇺🇦  and more CIS",
                  bg=PANEL, fg=SUBTEXT, font=("Segoe UI", 9)).pack(anchor="w", padx=20, pady=(0, 16))
 
@@ -2867,7 +2872,7 @@ class JobSearchApp(tk.Tk):
                            font=("Segoe UI", 9, "bold"),
                            padx=14, pady=7, relief="flat", cursor="hand2")
             lbl.pack(side="left", padx=5)
-            lbl.bind("<Button-1>", lambda e: __import__("webbrowser").open(url))
+            lbl.bind("<Button-1>", lambda e: webbrowser.open(url))
 
         # ── Icon + title ──────────────────────────────────────────────────────
         self._make_logo(center, 42, BG).pack(pady=(0, 4))
@@ -2889,7 +2894,7 @@ class JobSearchApp(tk.Tk):
                             font=("Segoe UI", 15, "bold"), cursor="hand2")
         name_lbl.pack(pady=(3, 12))
         name_lbl.bind("<Button-1>",
-                      lambda e: __import__("webbrowser").open("https://www.todorvankov.com"))
+                      lambda e: webbrowser.open("https://www.todorvankov.com"))
 
         links_row = tk.Frame(center, bg=BG)
         links_row.pack(pady=(0, 24))
@@ -2964,7 +2969,7 @@ class JobSearchApp(tk.Tk):
                  font=("Segoe UI", 9)).pack(side="left", padx=16)
 
         def _open():
-            __import__("webbrowser").open(url)
+            webbrowser.open(url)
 
         def _dismiss():
             bar.destroy()
@@ -3060,7 +3065,7 @@ class JobSearchApp(tk.Tk):
             import urllib.parse
             body = urllib.parse.quote(log_text.get("1.0", "end").strip()[:1800])
             subject = urllib.parse.quote(f"Bug Report — Job Search Tool v{APP_VERSION}")
-            __import__("webbrowser").open(
+            webbrowser.open(
                 f"mailto:todor@todorvankov.com?subject={subject}&body={body}")
 
         def _clear_log():
@@ -3205,148 +3210,173 @@ class JobSearchApp(tk.Tk):
 
     # ── Search ────────────────────────────────────────────────────────────────
     def _search(self):
-        what    = self.what_var.get().strip()
-        where   = self.where_var.get().strip()
-        country = COUNTRIES.get(self.country_var.get(), "de")
-        results = self.results_var.get()
-        sort_by = "relevance"
+        # Snapshot all tkinter vars here (UI thread only)
+        what       = self.what_var.get().strip()
+        where      = self.where_var.get().strip()
+        country    = COUNTRIES.get(self.country_var.get(), "de")
+        results    = self.results_var.get()
+        salary_min = self.salary_min_var.get().strip() or None
+        salary_max = self.salary_max_var.get().strip() or None
+        full_time  = self.fulltime_var.get()
+        permanent  = self.permanent_var.get()
+        use = {
+            "adzuna":    self.use_adzuna.get(),
+            "reed":      self.use_reed.get(),
+            "findwork":  self.use_findwork.get(),
+            "jooble":    self.use_jooble.get(),
+            "arbeitnow": self.use_arbeitnow.get(),
+            "bundesag":  self.use_bundesag.get(),
+            "remoteok":  self.use_remoteok.get(),
+            "themuse":   self.use_themuse.get(),
+            "headhunter":self.use_headhunter.get(),
+            "wwr":       self.use_wwr.get(),
+            "remotive":  self.use_remotive.get(),
+            "himalayas": self.use_himalayas.get(),
+        }
+        creds = {
+            "adzuna_id":   self.app_id_var.get().strip(),
+            "adzuna_key":  self.app_key_var.get().strip(),
+            "reed_key":    self.reed_key_var.get().strip(),
+        }
+        cfg = _load_config()
 
-        active = [v for v in [
-            self.use_adzuna, self.use_reed, self.use_findwork,
-            self.use_arbeitnow, self.use_remoteok, self.use_jooble,
-            self.use_themuse, self.use_bundesag,
-            self.use_headhunter, self.use_wwr, self.use_remotive,
-            self.use_himalayas,
-        ] if v.get()]
-        if not active:
+        if not any(use.values()):
             self._set_status("Select at least one provider.", ok=False)
             return
 
-        per_provider = results
-
+        self._search_btn.config(state="disabled")
         self._empty_state.place_forget()
         self._set_status("Searching…")
-        self.update_idletasks()
 
-        all_jobs     = []
-        seen_urls    = set()
-        auth_errors  = []
-        cfg          = _load_config()
+        def _bg():
+            all_jobs    = []
+            seen_urls   = set()
+            auth_errors = []
 
-        def _add(jobs):
-            for j in jobs:
-                if len(all_jobs) >= results:
-                    break
-                if j["url"]:
-                    if j["url"] in seen_urls:
+            def _add(jobs):
+                for j in jobs:
+                    if len(all_jobs) >= results:
+                        break
+                    if j["url"] and j["url"] in seen_urls:
                         continue
-                    seen_urls.add(j["url"])
-                all_jobs.append(j)
+                    if j["url"]:
+                        seen_urls.add(j["url"])
+                    all_jobs.append(j)
 
-        def _fetch(name, fn):
-            if len(all_jobs) >= results:
-                return
-            self._set_status(f"Searching {name}…  ({len(all_jobs)} so far)")
-            self.update_idletasks()
-            try:
-                _add(fn())
-            except AuthError:
-                auth_errors.append(name)
-
-        try:
-            if self.use_adzuna.get():
-                _fetch("Adzuna", lambda: AdzunaProvider(
-                    self.app_id_var.get().strip(),
-                    self.app_key_var.get().strip(),
-                ).search(what, where, country=country, results=per_provider,
-                         sort_by=sort_by,
-                         salary_min=self.salary_min_var.get().strip() or None,
-                         salary_max=self.salary_max_var.get().strip() or None,
-                         full_time=self.fulltime_var.get(),
-                         permanent=self.permanent_var.get()))
-
-            if self.use_reed.get():
-                _fetch("Reed", lambda: ReedProvider(
-                    self.reed_key_var.get().strip()).search(what, where, results=per_provider))
-
-            if self.use_findwork.get():
-                _fetch("Findwork", lambda: FindworkProvider(
-                    cfg.get("findwork_key", "")).search(what, where, results=per_provider))
-
-            if self.use_jooble.get():
-                _fetch("Jooble", lambda: JoobleProvider(
-                    cfg.get("jooble_key", "")).search(what, where, results=per_provider))
-
-            if self.use_arbeitnow.get():
-                _fetch("Arbeitnow", lambda: ArbeitnowProvider().search(what, where, results=per_provider))
-
-            if self.use_bundesag.get():
-                _fetch("Bundesagentur", lambda: BundesagenturProvider().search(what, where, results=per_provider))
-
-            if self.use_remoteok.get():
-                _fetch("RemoteOK", lambda: RemoteOKProvider().search(what, where, results=per_provider))
-
-            if self.use_themuse.get():
-                _fetch("The Muse", lambda: TheMuseProvider(
-                    cfg.get("themuse_key", "")).search(what, where, results=per_provider))
-
-
-            if self.use_headhunter.get():
-                _fetch("HeadHunter", lambda: HeadHunterProvider(
-                    cfg.get("hh_token", "")).search(what, where, results=per_provider))
-
-            if self.use_wwr.get():
-                _fetch("WWR", lambda: WeWorkRemotelyProvider().search(what, where, results=per_provider))
-
-            if self.use_remotive.get():
-                _fetch("Remotive", lambda: RemotiveProvider().search(what, where, results=per_provider))
-
-            if self.use_himalayas.get():
-                _fetch("Himalayas", lambda: HimalayasProvider().search(what, where, results=per_provider))
-
-            self.jobs = all_jobs[:results]
-            self._sort_col = None
-            self._sort_rev = False
-            for c, lbl in self._tree_col_labels.items():
-                self.tree.heading(c, text=lbl)
-            for row in self.tree.get_children():
-                self.tree.delete(row)
-
-            self._set_status(f"Loading {len(self.jobs)} jobs…")
-            self.update_idletasks()
-            for i, job in enumerate(self.jobs):
-                s_min = job.get("salary_min")
-                s_max = job.get("salary_max")
+            def _fetch(name, fn):
+                if len(all_jobs) >= results:
+                    return
+                self.after(0, self._set_status,
+                           f"Searching {name}…  ({len(all_jobs)} so far)")
                 try:
-                    salary = (f"{int(float(s_min)):,} – {int(float(s_max)):,}" if s_min and s_max
-                              else f"from {int(float(s_min)):,}" if s_min else "")
-                except Exception:
-                    salary = ""
-                self.tree.insert("", "end", iid=str(i),
-                                 tags=("odd" if i % 2 else "even",),
-                                 values=(job["title"], job["company"], job["location"],
-                                         salary, job["created"], job["source"], job["url"]))
-                if i % 50 == 49:
-                    self.update_idletasks()
+                    _add(fn())
+                except AuthError:
+                    auth_errors.append(name)
 
-            if not self.jobs:
-                self._empty_state.place(relx=0.5, rely=0.5, anchor="center")
-                self._set_status("No jobs found — try different keywords or providers", ok=False)
-            else:
-                hint = "  (no keyword — showing latest)" if not what else ""
-                self._set_status(f"✓ {len(self.jobs)} jobs found{hint}")
+            try:
+                if use["adzuna"]:
+                    _fetch("Adzuna", lambda: AdzunaProvider(
+                        creds["adzuna_id"], creds["adzuna_key"],
+                    ).search(what, where, country=country, results=results,
+                             sort_by="relevance",
+                             salary_min=salary_min, salary_max=salary_max,
+                             full_time=full_time, permanent=permanent))
 
-            if auth_errors:
-                names = ", ".join(auth_errors)
-                self._set_status(
-                    f"⚠  Invalid API key: {names} — check Credentials tab", ok=False)
+                if use["reed"]:
+                    _fetch("Reed", lambda: ReedProvider(
+                        creds["reed_key"]).search(what, where, results=results))
 
-        except requests.exceptions.ConnectionError:
+                if use["findwork"]:
+                    _fetch("Findwork", lambda: FindworkProvider(
+                        cfg.get("findwork_key", "")).search(what, where, results=results))
+
+                if use["jooble"]:
+                    _fetch("Jooble", lambda: JoobleProvider(
+                        cfg.get("jooble_key", "")).search(what, where, results=results))
+
+                if use["arbeitnow"]:
+                    _fetch("Arbeitnow", lambda: ArbeitnowProvider().search(
+                        what, where, results=results))
+
+                if use["bundesag"]:
+                    _fetch("Bundesagentur", lambda: BundesagenturProvider().search(
+                        what, where, results=results))
+
+                if use["remoteok"]:
+                    _fetch("RemoteOK", lambda: RemoteOKProvider().search(
+                        what, where, results=results))
+
+                if use["themuse"]:
+                    _fetch("The Muse", lambda: TheMuseProvider(
+                        cfg.get("themuse_key", "")).search(what, where, results=results))
+
+                if use["headhunter"]:
+                    _fetch("HeadHunter", lambda: HeadHunterProvider(
+                        cfg.get("hh_token", "")).search(what, where, results=results))
+
+                if use["wwr"]:
+                    _fetch("WWR", lambda: WeWorkRemotelyProvider().search(
+                        what, where, results=results))
+
+                if use["remotive"]:
+                    _fetch("Remotive", lambda: RemotiveProvider().search(
+                        what, where, results=results))
+
+                if use["himalayas"]:
+                    _fetch("Himalayas", lambda: HimalayasProvider().search(
+                        what, where, results=results))
+
+            except requests.exceptions.ConnectionError:
+                self.after(0, self._on_search_error, "No internet connection")
+                return
+            except Exception as e:
+                self.after(0, self._on_search_error, f"Error: {e}")
+                return
+
+            self.after(0, self._on_search_done, all_jobs[:results], auth_errors, what)
+
+        threading.Thread(target=_bg, daemon=True).start()
+
+    def _on_search_done(self, jobs, auth_errors, what):
+        self._search_btn.config(state="normal")
+        self.jobs = jobs
+        self._sort_col = None
+        self._sort_rev = False
+        for c, lbl in self._tree_col_labels.items():
+            self.tree.heading(c, text=lbl)
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+
+        self._set_status(f"Loading {len(self.jobs)} jobs…")
+        for i, job in enumerate(self.jobs):
+            s_min = job.get("salary_min")
+            s_max = job.get("salary_max")
+            try:
+                salary = (f"{int(float(s_min)):,} – {int(float(s_max)):,}" if s_min and s_max
+                          else f"from {int(float(s_min)):,}" if s_min else "")
+            except Exception:
+                salary = ""
+            self.tree.insert("", "end", iid=str(i),
+                             tags=("odd" if i % 2 else "even",),
+                             values=(job["title"], job["company"], job["location"],
+                                     salary, job["created"], job["source"], job["url"]))
+
+        if not self.jobs:
             self._empty_state.place(relx=0.5, rely=0.5, anchor="center")
-            self._set_status("No internet connection", ok=False)
-        except Exception as e:
-            self._empty_state.place(relx=0.5, rely=0.5, anchor="center")
-            self._set_status(f"Error: {e}", ok=False)
+            self._set_status("No jobs found — try different keywords or providers", ok=False)
+        else:
+            hint = "  (no keyword — showing latest)" if not what else ""
+            self._set_status(f"✓ {len(self.jobs)} jobs found{hint}")
+
+        if auth_errors:
+            names = ", ".join(auth_errors)
+            self._set_status(
+                f"⚠  Invalid API key: {names} — check Credentials tab", ok=False)
+
+    def _on_search_error(self, msg):
+        self._search_btn.config(state="normal")
+        self._empty_state.place(relx=0.5, rely=0.5, anchor="center")
+        self._set_status(msg, ok=False)
 
     # ── Double click → open URL ───────────────────────────────────────────────
     def _open_link(self, event):
@@ -3354,7 +3384,7 @@ class JobSearchApp(tk.Tk):
         if sel:
             url = self.tree.item(sel[0])["values"][6]
             if url:
-                __import__("webbrowser").open(url)
+                webbrowser.open(url)
 
     # ── Clear ─────────────────────────────────────────────────────────────────
     def _clear(self):

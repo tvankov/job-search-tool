@@ -6,17 +6,35 @@ Designed to be called by Windows Task Scheduler once a day.
 """
 
 import os
+import sys
 import json
-import requests
 from datetime import datetime
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
-# ── Load config from config.json (written by the GUI) ────────────────────────
+# ── Resolve paths ─────────────────────────────────────────────────────────────
 _BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 _CONFIG_PATH = os.path.join(_BASE_DIR, "config.json")
+LOG_FILE     = os.path.join(_BASE_DIR, "job_search.log")
+JOBS_DIR     = os.path.join(_BASE_DIR, "jobs")
 
-def _load_config():
+# ── Make providers importable when run as a script ────────────────────────────
+if _BASE_DIR not in sys.path:
+    sys.path.insert(0, _BASE_DIR)
+
+from providers import (
+    AuthError,
+    AdzunaProvider, ReedProvider, FindworkProvider,
+    ArbeitnowProvider, RemoteOKProvider, JoobleProvider,
+    TheMuseProvider, BundesagenturProvider, HeadHunterProvider,
+    WeWorkRemotelyProvider, RemotiveProvider, HimalayasProvider,
+)
+
+RESULTS_PER_PROVIDER = 50
+
+
+# ── Config ────────────────────────────────────────────────────────────────────
+def _load_config() -> dict:
     if os.path.exists(_CONFIG_PATH):
         try:
             with open(_CONFIG_PATH, encoding="utf-8") as f:
@@ -25,20 +43,9 @@ def _load_config():
             pass
     return {}
 
-_cfg = _load_config()
 
-APP_ID           = _cfg.get("app_id",  "")
-APP_KEY          = _cfg.get("app_key", "")
-SEARCHES         = _cfg.get("searches", [])
-RESULTS_PER_PAGE = 50
-# ─────────────────────────────────────────────────────────────────────────────
-
-BASE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jobs")
-LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "job_search.log")
-
-
+# ── Logging ───────────────────────────────────────────────────────────────────
 def log(msg: str):
-    """Write message to log file and print to console."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     line = f"[{timestamp}] {msg}"
     print(line)
@@ -46,41 +53,99 @@ def log(msg: str):
         f.write(line + "\n")
 
 
-def fetch_jobs(what: str, where: str, country: str) -> list:
-    """Fetch jobs from Adzuna API."""
-    url = f"https://api.adzuna.com/v1/api/jobs/{country}/search/1"
-    params = {
-        "app_id":           APP_ID,
-        "app_key":          APP_KEY,
-        "what":             what,
-        "where":            where,
-        "results_per_page": RESULTS_PER_PAGE,
-        "sort_by":          "date",
-    }
-    try:
-        resp = requests.get(url, params=params, timeout=15)
-        if resp.status_code == 200:
-            return resp.json().get("results", [])
-        else:
-            log(f"  !! API error {resp.status_code} for '{what}' in '{where}'")
-            return []
-    except Exception as e:
-        log(f"  !! Connection error: {e}")
-        return []
+# ── Fetch from all active providers ───────────────────────────────────────────
+def fetch_jobs(what: str, where: str, country: str, cfg: dict) -> list:
+    use       = cfg.get("providers", {})
+    all_jobs  = []
+    seen_urls = set()
+
+    def _add(jobs, source_name):
+        for j in jobs:
+            url = j.get("url", "")
+            if url and url in seen_urls:
+                continue
+            if url:
+                seen_urls.add(url)
+            all_jobs.append(j)
+
+    def _fetch(name, fn, enabled=True):
+        if not enabled:
+            return
+        try:
+            jobs = fn()
+            count_before = len(all_jobs)
+            _add(jobs, name)
+            log(f"    {name}: {len(all_jobs) - count_before} jobs")
+        except AuthError:
+            log(f"    {name}: !! invalid API key — skipped")
+        except Exception as e:
+            log(f"    {name}: !! error — {e}")
+
+    _fetch("Adzuna",        lambda: AdzunaProvider(
+        cfg.get("app_id", ""), cfg.get("app_key", ""),
+    ).search(what, where, country=country, results=RESULTS_PER_PROVIDER, sort_by="date"),
+        enabled=use.get("adzuna", False) and bool(cfg.get("app_id") and cfg.get("app_key")))
+
+    _fetch("Reed",          lambda: ReedProvider(
+        cfg.get("reed_key", "")).search(what, where, results=RESULTS_PER_PROVIDER),
+        enabled=use.get("reed", False) and bool(cfg.get("reed_key")))
+
+    _fetch("Findwork",      lambda: FindworkProvider(
+        cfg.get("findwork_key", "")).search(what, where, results=RESULTS_PER_PROVIDER),
+        enabled=use.get("findwork", False) and bool(cfg.get("findwork_key")))
+
+    _fetch("Jooble",        lambda: JoobleProvider(
+        cfg.get("jooble_key", "")).search(what, where, results=RESULTS_PER_PROVIDER),
+        enabled=use.get("jooble", False) and bool(cfg.get("jooble_key")))
+
+    _fetch("HeadHunter",    lambda: HeadHunterProvider(
+        cfg.get("hh_token", "")).search(what, where, results=RESULTS_PER_PROVIDER),
+        enabled=use.get("headhunter", False) and bool(cfg.get("hh_token")))
+
+    _fetch("Arbeitnow",     lambda: ArbeitnowProvider().search(
+        what, where, results=RESULTS_PER_PROVIDER),
+        enabled=use.get("arbeitnow", True))
+
+    _fetch("Bundesagentur", lambda: BundesagenturProvider().search(
+        what, where, results=RESULTS_PER_PROVIDER),
+        enabled=use.get("bundesag", True))
+
+    _fetch("RemoteOK",      lambda: RemoteOKProvider().search(
+        what, where, results=RESULTS_PER_PROVIDER),
+        enabled=use.get("remoteok", True))
+
+    _fetch("The Muse",      lambda: TheMuseProvider("").search(
+        what, where, results=RESULTS_PER_PROVIDER),
+        enabled=use.get("themuse", True))
+
+    _fetch("WeWorkRemotely", lambda: WeWorkRemotelyProvider().search(
+        what, where, results=RESULTS_PER_PROVIDER),
+        enabled=use.get("wwr", True))
+
+    _fetch("Remotive",      lambda: RemotiveProvider().search(
+        what, where, results=RESULTS_PER_PROVIDER),
+        enabled=use.get("remotive", True))
+
+    _fetch("Himalayas",     lambda: HimalayasProvider().search(
+        what, where, results=RESULTS_PER_PROVIDER),
+        enabled=use.get("himalayas", True))
+
+    return all_jobs
 
 
-def save_to_excel(jobs: list, job_title: str, search_info: dict):
+# ── Excel export ──────────────────────────────────────────────────────────────
+def save_to_excel(jobs: list, job_title: str, search_info: dict) -> tuple:
     """Append new jobs to the persistent Excel file for this job title + location."""
     where = search_info.get("where", "").strip()
     label = f"{job_title} {where}".strip() if where else job_title
     safe  = label.replace(" ", "_")
-    folder    = os.path.join(BASE_DIR, safe)
+    folder = os.path.join(JOBS_DIR, safe)
     os.makedirs(folder, exist_ok=True)
-    path      = os.path.join(folder, f"{safe}.xlsx")
+    path = os.path.join(folder, f"{safe}.xlsx")
 
-    headers   = ["Title", "Company", "Location",
-                 "Salary Min (€)", "Salary Max (€)", "Posted",
-                 "Link", "Description", "Imported On"]
+    headers = ["Title", "Company", "Location",
+               "Salary Min", "Salary Max", "Posted",
+               "Link", "Description", "Source", "Imported On"]
 
     hdr_fill  = PatternFill("solid", start_color="0ea5e9")
     hdr_font  = Font(bold=True, color="FFFFFF", name="Arial", size=11)
@@ -91,7 +156,6 @@ def save_to_excel(jobs: list, job_title: str, search_info: dict):
     data_font = Font(name="Arial", size=10, color="F1F5F9")
     link_font = Font(name="Arial", size=10, color="38bdf8", underline="single")
 
-    # Load existing or create new
     if os.path.exists(path):
         wb = load_workbook(path)
         ws = wb["Job Results"]
@@ -107,29 +171,29 @@ def save_to_excel(jobs: list, job_title: str, search_info: dict):
             cell.alignment = hdr_align; cell.border = border
         ws.row_dimensions[1].height = 22
 
-    # Append new jobs
     next_row = ws.max_row + 1
     added = skipped = 0
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
 
     for job in jobs:
-        url = job.get("redirect_url", "")
+        url = job.get("url", "")
         if url in existing_urls:
             skipped += 1
             continue
         existing_urls.add(url)
         fill = odd_fill if (next_row % 2) else even_fill
-        desc = job.get("description", "").replace("\n", " ")[:300]
+        desc = str(job.get("description", "")).replace("\n", " ")[:300]
 
         row_data = [
             job.get("title", ""),
-            job.get("company", {}).get("display_name", ""),
-            job.get("location", {}).get("display_name", ""),
+            job.get("company", ""),
+            job.get("location", ""),
             job.get("salary_min") or "",
             job.get("salary_max") or "",
-            job.get("created", "")[:10],
+            str(job.get("created", ""))[:10],
             url,
             desc,
+            job.get("source", ""),
             now_str,
         ]
         for col, val in enumerate(row_data, 1):
@@ -143,32 +207,30 @@ def save_to_excel(jobs: list, job_title: str, search_info: dict):
         next_row += 1
         added += 1
 
-    # Column widths
-    for col, w in enumerate([40, 25, 22, 16, 16, 14, 40, 60, 18], 1):
+    for col, w in enumerate([40, 25, 22, 16, 16, 14, 40, 60, 18, 18], 1):
         ws.column_dimensions[ws.cell(1, col).column_letter].width = w
 
-    # Update Search Info sheet
+    # Search Info sheet
     if "Search Info" in wb.sheetnames:
         del wb["Search Info"]
-    meta      = wb.create_sheet("Search Info")
-    bg        = PatternFill("solid", start_color="1e293b")
-    m_font    = Font(name="Arial", size=10, color="F1F5F9")
-    m_bold    = Font(name="Arial", size=10, color="38bdf8", bold=True)
-    total     = ws.max_row - 1
+    meta   = wb.create_sheet("Search Info")
+    bg     = PatternFill("solid", start_color="1e293b")
+    m_font = Font(name="Arial", size=10, color="F1F5F9")
+    m_bold = Font(name="Arial", size=10, color="38bdf8", bold=True)
+    total  = ws.max_row - 1
 
-    for r, (label, value) in enumerate([
+    for r, (lbl, val) in enumerate([
         ("Search query",       search_info.get("what", "")),
         ("Location",           search_info.get("where", "")),
         ("Last updated",       now_str),
         ("Total jobs",         total),
         ("Added this run",     added),
         ("Duplicates skipped", skipped),
-        ("Source",             "Adzuna API — adzuna.com"),
     ], 1):
-        c1 = meta.cell(row=r, column=1, value=label)
-        c2 = meta.cell(row=r, column=2, value=value)
-        c1.font = m_bold;  c1.fill = bg
-        c2.font = m_font;  c2.fill = bg
+        c1 = meta.cell(row=r, column=1, value=lbl)
+        c2 = meta.cell(row=r, column=2, value=val)
+        c1.font = m_bold; c1.fill = bg
+        c2.font = m_font; c2.fill = bg
 
     meta.column_dimensions["A"].width = 22
     meta.column_dimensions["B"].width = 35
@@ -179,34 +241,42 @@ def save_to_excel(jobs: list, job_title: str, search_info: dict):
     return added, skipped, total
 
 
+# ── Main ──────────────────────────────────────────────────────────────────────
 def run():
     log("=" * 55)
     log("Job Search Auto-Run started")
     log("=" * 55)
 
-    if not APP_ID or not APP_KEY:
-        log("!! No API credentials found. Open the app -> Credentials tab -> Save Credentials.")
+    cfg     = _load_config()
+    searches = cfg.get("searches", [])
+
+    if not searches:
+        log("!! No searches configured. Open the app → Auto Run tab → add a search.")
         log("=" * 55 + "\n")
         return
 
-    if not SEARCHES:
-        log("!! No search configured. Open the app -> Search tab -> click Schedule Daily.")
+    active_providers = [k for k, v in cfg.get("providers", {}).items() if v]
+    if not active_providers:
+        log("!! No providers enabled. Open the app → chip bar → enable at least one.")
         log("=" * 55 + "\n")
         return
 
+    log(f"Active providers: {', '.join(active_providers)}")
     total_added = 0
 
-    for search in SEARCHES:
+    for search in searches:
         what, where, country = search["what"], search["where"], search["country"]
         log(f"Searching: '{what}' in '{where}' ({country.upper()})")
 
-        jobs = fetch_jobs(what, where, country)
-        log(f"  >> {len(jobs)} jobs fetched from API")
+        jobs = fetch_jobs(what, where, country, cfg)
+        log(f"  >> {len(jobs)} total jobs fetched")
 
         if jobs:
             added, skipped, total = save_to_excel(jobs, what, search)
             log(f"  >> {added} new  |  {skipped} duplicates skipped  |  {total} total in file")
             total_added += added
+        else:
+            log("  >> No jobs returned")
 
     log(f"Done — {total_added} new jobs added across all searches")
     log("=" * 55 + "\n")
