@@ -1045,10 +1045,6 @@ class JobSearchApp(tk.Tk):
         self.run_where_var   = tk.StringVar()
         self.run_country_var = tk.StringVar(value="Germany")
 
-        self.run_what_var    = tk.StringVar()
-        self.run_where_var   = tk.StringVar()
-        self.run_country_var = tk.StringVar(value="Germany")
-
         # Treeview
         s_cols = ("what", "where", "country", "file")
         self.runs_tree = ttk.Treeview(outer, columns=s_cols, show="headings",
@@ -3592,7 +3588,7 @@ Register-ScheduledTask -TaskName '{task_name}' -Action $action -Trigger $trigger
                 "You can re-schedule anytime with ⏱ Schedule Daily.")
         else:
             err = result.stderr.strip().lower()
-            if "cannot find" in err or "nicht gefunden" in err or "nicht finden" in err or "does not exist" in err or "existiert nicht" in err or result.returncode == 1:
+            if "cannot find" in err or "nicht gefunden" in err or "nicht finden" in err or "does not exist" in err or "existiert nicht" in err or "error: 0x80070002" in err:
                 self._set_status("⚠ No active schedule found", ok=False)
                 messagebox.showwarning("Not found",
                     f"No task named '{task_name}' was found.\n"
