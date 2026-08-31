@@ -1,5 +1,4 @@
-import requests
-from .base import BaseProvider
+from .base import BaseProvider, logger
 
 
 class RemoteOKProvider(BaseProvider):
@@ -8,12 +7,13 @@ class RemoteOKProvider(BaseProvider):
 
     def search(self, what, where, country="de", results=20, **kwargs):
         try:
-            resp = requests.get(
+            resp = self._request(
+                "get",
                 self._URL,
                 headers={"User-Agent": "JobSearchTool/1.0"},
                 timeout=15,
             )
-            if resp.status_code == 200:
+            if resp is not None and resp.status_code == 200:
                 data      = resp.json()
                 what_low  = what.lower()
                 words     = what_low.split() if what_low else []
@@ -25,8 +25,8 @@ class RemoteOKProvider(BaseProvider):
                         return all(w in haystack for w in words)
                     jobs_raw = [j for j in jobs_raw if _rok_match(j)]
                 return [self._normalize(j) for j in jobs_raw]
-        except Exception:
-            pass
+        except ValueError as exc:  # malformed JSON response
+            logger.warning("%s: bad JSON — %s", self.name, exc)
         return []
 
     def _normalize(self, j):

@@ -1,5 +1,4 @@
-import requests
-from .base import BaseProvider, AuthError
+from .base import BaseProvider, AuthError, logger
 
 
 class ReedProvider(BaseProvider):
@@ -18,14 +17,16 @@ class ReedProvider(BaseProvider):
         skip = 0
         try:
             while len(all_jobs) < results:
-                resp = requests.get(
+                resp = self._request(
+                    "get",
                     self._URL,
                     params={"keywords": what, "locationName": where,
                             "resultsToTake": self._PAGE_SIZE,
                             "resultsToSkip": skip},
                     auth=(self.api_key, ""),
-                    timeout=10,
                 )
+                if resp is None:
+                    break
                 if resp.status_code in (401, 403):
                     raise AuthError("Reed")
                 if resp.status_code != 200:
@@ -39,8 +40,8 @@ class ReedProvider(BaseProvider):
                 skip += self._PAGE_SIZE
         except AuthError:
             raise
-        except Exception:
-            pass
+        except ValueError as exc:  # malformed JSON response
+            logger.warning("%s: bad JSON — %s", self.name, exc)
         return all_jobs[:results]
 
     def _normalize(self, j):

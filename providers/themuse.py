@@ -1,5 +1,4 @@
-import requests
-from .base import BaseProvider
+from .base import BaseProvider, logger
 
 
 class TheMuseProvider(BaseProvider):
@@ -19,7 +18,9 @@ class TheMuseProvider(BaseProvider):
                 params = {"page": page, "descending": "true"}
                 if self.api_key:
                     params["api_key"] = self.api_key
-                resp = requests.get(self._URL, params=params, timeout=10)
+                resp = self._request("get", self._URL, params=params)
+                if resp is None:
+                    break
                 if resp.status_code != 200:
                     break
                 jobs = resp.json().get("results", [])
@@ -33,8 +34,8 @@ class TheMuseProvider(BaseProvider):
                     collected.append(self._normalize(j))
                 page += 1
             return collected[:results]
-        except Exception:
-            pass
+        except ValueError as exc:  # malformed JSON response
+            logger.warning("%s: bad JSON — %s", self.name, exc)
         return []
 
     def _normalize(self, j):

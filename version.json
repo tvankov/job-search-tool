@@ -1,5 +1,5 @@
 {
-    "version": "1.0.1",
+    "version": "1.0.2",
     "download_url": "https://github.com/tvankov/job-search-tool/releases/latest",
-    "changelog": "Initial release"
+    "changelog": "Analytics zoom slider, Applied column, delete jobs, online status check, parallel search, robust error handling"
 }

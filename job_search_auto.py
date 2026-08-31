@@ -8,32 +8,38 @@ Designed to be called by Windows Task Scheduler once a day.
 import os
 import sys
 import json
+import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
 # ── Resolve paths ─────────────────────────────────────────────────────────────
-_BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
-_CONFIG_PATH = os.path.join(_BASE_DIR, "config.json")
-LOG_FILE     = os.path.join(_BASE_DIR, "job_search.log")
-JOBS_DIR     = os.path.join(_BASE_DIR, "jobs")
+_BASE_DIR     = os.path.dirname(os.path.abspath(__file__))
+_CONFIG_PATH  = os.path.join(_BASE_DIR, "config.json")
+_DELETED_PATH = os.path.join(_BASE_DIR, "deleted.json")
+LOG_FILE      = os.path.join(_BASE_DIR, "job_search.log")
+JOBS_DIR      = os.path.join(_BASE_DIR, "jobs")
 
 # ── Make providers importable when run as a script ────────────────────────────
 if _BASE_DIR not in sys.path:
     sys.path.insert(0, _BASE_DIR)
 
-from providers import (
-    AuthError,
-    AdzunaProvider, ReedProvider, FindworkProvider,
-    ArbeitnowProvider, RemoteOKProvider, JoobleProvider,
-    TheMuseProvider, BundesagenturProvider, HeadHunterProvider,
-    WeWorkRemotelyProvider, RemotiveProvider, HimalayasProvider,
-)
+from providers import AuthError, build_provider_tasks, dedup_jobs
 
 RESULTS_PER_PROVIDER = 50
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
+def _load_deleted() -> set:
+    """URLs the user permanently deleted in the GUI — never re-add these."""
+    try:
+        with open(_DELETED_PATH, encoding="utf-8") as f:
+            return set(json.load(f))
+    except Exception:
+        return set()
+
+
 def _load_config() -> dict:
     if os.path.exists(_CONFIG_PATH):
         try:
@@ -53,84 +59,53 @@ def log(msg: str):
         f.write(line + "\n")
 
 
+# Route provider-level warnings (network / rate-limit / parse errors) to the
+# same log file so a failing provider is visible, not silently swallowed.
+_prov_log = logging.getLogger("jobsearch")
+if not _prov_log.handlers:
+    _prov_log.setLevel(logging.WARNING)
+    _h = logging.FileHandler(LOG_FILE, encoding="utf-8")
+    _h.setFormatter(logging.Formatter("[%(asctime)s] %(message)s", "%Y-%m-%d %H:%M:%S"))
+    _prov_log.addHandler(_h)
+
+
 # ── Fetch from all active providers ───────────────────────────────────────────
 def fetch_jobs(what: str, where: str, country: str, cfg: dict) -> list:
-    use       = cfg.get("providers", {})
-    all_jobs  = []
-    seen_urls = set()
+    creds = {
+        "adzuna_id":       cfg.get("app_id", ""),
+        "adzuna_key":      cfg.get("app_key", ""),
+        "reed_key":        cfg.get("reed_key", ""),
+        "findwork_key":    cfg.get("findwork_key", ""),
+        "jooble_key":      cfg.get("jooble_key", ""),
+        "hh_token":        cfg.get("hh_token", ""),
+        "themuse_key":     cfg.get("themuse_key", ""),
+    }
+    tasks = build_provider_tasks(
+        use=cfg.get("providers", {}), creds=creds,
+        what=what, where=where, country=country,
+        results=RESULTS_PER_PROVIDER, sort_by="date")
+    if not tasks:
+        return []
 
-    def _add(jobs, source_name):
-        for j in jobs:
-            url = j.get("url", "")
-            if url and url in seen_urls:
-                continue
-            if url:
-                seen_urls.add(url)
-            all_jobs.append(j)
+    # Fetch all providers concurrently
+    results_by_name = {}
+    with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
+        futures = {pool.submit(fn): name for name, fn in tasks}
+        for fut in as_completed(futures):
+            name = futures[fut]
+            try:
+                jobs = fut.result()
+                results_by_name[name] = jobs
+                log(f"    {name}: {len(jobs)} jobs")
+            except AuthError:
+                results_by_name[name] = []
+                log(f"    {name}: !! invalid API key — skipped")
+            except Exception as e:
+                results_by_name[name] = []
+                log(f"    {name}: !! error — {e}")
 
-    def _fetch(name, fn, enabled=True):
-        if not enabled:
-            return
-        try:
-            jobs = fn()
-            count_before = len(all_jobs)
-            _add(jobs, name)
-            log(f"    {name}: {len(all_jobs) - count_before} jobs")
-        except AuthError:
-            log(f"    {name}: !! invalid API key — skipped")
-        except Exception as e:
-            log(f"    {name}: !! error — {e}")
-
-    _fetch("Adzuna",        lambda: AdzunaProvider(
-        cfg.get("app_id", ""), cfg.get("app_key", ""),
-    ).search(what, where, country=country, results=RESULTS_PER_PROVIDER, sort_by="date"),
-        enabled=use.get("adzuna", False) and bool(cfg.get("app_id") and cfg.get("app_key")))
-
-    _fetch("Reed",          lambda: ReedProvider(
-        cfg.get("reed_key", "")).search(what, where, results=RESULTS_PER_PROVIDER),
-        enabled=use.get("reed", False) and bool(cfg.get("reed_key")))
-
-    _fetch("Findwork",      lambda: FindworkProvider(
-        cfg.get("findwork_key", "")).search(what, where, results=RESULTS_PER_PROVIDER),
-        enabled=use.get("findwork", False) and bool(cfg.get("findwork_key")))
-
-    _fetch("Jooble",        lambda: JoobleProvider(
-        cfg.get("jooble_key", "")).search(what, where, results=RESULTS_PER_PROVIDER),
-        enabled=use.get("jooble", False) and bool(cfg.get("jooble_key")))
-
-    _fetch("HeadHunter",    lambda: HeadHunterProvider(
-        cfg.get("hh_token", "")).search(what, where, results=RESULTS_PER_PROVIDER),
-        enabled=use.get("headhunter", False) and bool(cfg.get("hh_token")))
-
-    _fetch("Arbeitnow",     lambda: ArbeitnowProvider().search(
-        what, where, results=RESULTS_PER_PROVIDER),
-        enabled=use.get("arbeitnow", True))
-
-    _fetch("Bundesagentur", lambda: BundesagenturProvider().search(
-        what, where, results=RESULTS_PER_PROVIDER),
-        enabled=use.get("bundesag", True))
-
-    _fetch("RemoteOK",      lambda: RemoteOKProvider().search(
-        what, where, results=RESULTS_PER_PROVIDER),
-        enabled=use.get("remoteok", True))
-
-    _fetch("The Muse",      lambda: TheMuseProvider("").search(
-        what, where, results=RESULTS_PER_PROVIDER),
-        enabled=use.get("themuse", True))
-
-    _fetch("WeWorkRemotely", lambda: WeWorkRemotelyProvider().search(
-        what, where, results=RESULTS_PER_PROVIDER),
-        enabled=use.get("wwr", True))
-
-    _fetch("Remotive",      lambda: RemotiveProvider().search(
-        what, where, results=RESULTS_PER_PROVIDER),
-        enabled=use.get("remotive", True))
-
-    _fetch("Himalayas",     lambda: HimalayasProvider().search(
-        what, where, results=RESULTS_PER_PROVIDER),
-        enabled=use.get("himalayas", True))
-
-    return all_jobs
+    # Merge in task order so provider priority is preserved, dedup by URL
+    return dedup_jobs([results_by_name.get(name, []) for name, _fn in tasks])
 
 
 # ── Excel export ──────────────────────────────────────────────────────────────
@@ -174,10 +149,11 @@ def save_to_excel(jobs: list, job_title: str, search_info: dict) -> tuple:
     next_row = ws.max_row + 1
     added = skipped = 0
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+    deleted = _load_deleted()   # jobs the user removed in the GUI stay gone
 
     for job in jobs:
         url = job.get("url", "")
-        if url in existing_urls:
+        if url in existing_urls or url in deleted:
             skipped += 1
             continue
         existing_urls.add(url)

@@ -1,6 +1,4 @@
-import time
-import requests
-from .base import BaseProvider
+from .base import BaseProvider, logger
 
 
 class HimalayasProvider(BaseProvider):
@@ -21,10 +19,9 @@ class HimalayasProvider(BaseProvider):
                     params["country"] = where.strip()
 
                 url  = self._SEARCH_URL if what.strip() else self._BROWSE_URL
-                resp = requests.get(url, params=params, timeout=10)
-                if resp.status_code == 429:
-                    time.sleep(2)
-                    continue
+                resp = self._request("get", url, params=params)
+                if resp is None:
+                    break
                 if resp.status_code != 200:
                     break
                 data       = resp.json()
@@ -36,8 +33,8 @@ class HimalayasProvider(BaseProvider):
                 offset += limit
                 if offset >= total:
                     break
-        except Exception:
-            pass
+        except ValueError as exc:  # malformed JSON response
+            logger.warning("%s: bad JSON — %s", self.name, exc)
         return all_jobs[:results]
 
     def _normalize(self, j):

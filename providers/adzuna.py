@@ -1,5 +1,4 @@
-import requests
-from .base import BaseProvider, AuthError
+from .base import BaseProvider, AuthError, logger
 
 
 class AdzunaProvider(BaseProvider):
@@ -32,7 +31,9 @@ class AdzunaProvider(BaseProvider):
         try:
             while len(all_jobs) < results:
                 url = self._URL.format(country=country, page=page)
-                resp = requests.get(url, params=base_params, timeout=10)
+                resp = self._request("get", url, params=base_params)
+                if resp is None:
+                    break
                 if resp.status_code in (401, 403):
                     raise AuthError("Adzuna")
                 if resp.status_code != 200:
@@ -46,8 +47,8 @@ class AdzunaProvider(BaseProvider):
                 page += 1
         except AuthError:
             raise
-        except Exception:
-            pass
+        except ValueError as exc:  # malformed JSON response
+            logger.warning("%s: bad JSON — %s", self.name, exc)
         return all_jobs[:results]
 
     def _normalize(self, j):

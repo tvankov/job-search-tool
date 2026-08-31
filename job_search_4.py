@@ -8,7 +8,9 @@ import subprocess
 import traceback
 import threading
 import webbrowser
-from datetime import datetime
+import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 import matplotlib
 matplotlib.use("TkAgg")
@@ -25,15 +27,9 @@ except ImportError:
     _PIL = False
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from providers import (AuthError,
-                       AdzunaProvider, ReedProvider, FindworkProvider,
-                       ArbeitnowProvider, RemoteOKProvider,
-                       JoobleProvider, TheMuseProvider,
-                       BundesagenturProvider,
-                       HeadHunterProvider, WeWorkRemotelyProvider,
-                       RemotiveProvider, HimalayasProvider)
+from providers import AuthError, build_provider_tasks, dedup_jobs
 
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.2"
 
 # ── Error logging ──────────────────────────────────────────────────────────────
 def _log_error(exc_type, exc_value, exc_tb):
@@ -51,6 +47,17 @@ def _log_error(exc_type, exc_value, exc_tb):
     sys.__excepthook__(exc_type, exc_value, exc_tb)
 
 sys.excepthook = _log_error
+
+# Route provider-level warnings (network / rate-limit / parse errors) to error.log
+_prov_log = logging.getLogger("jobsearch")
+if not _prov_log.handlers:
+    _prov_log.setLevel(logging.WARNING)
+    _prov_handler = logging.FileHandler(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "error.log"),
+        encoding="utf-8")
+    _prov_handler.setFormatter(
+        logging.Formatter("[%(asctime)s] %(levelname)s %(message)s", "%Y-%m-%d %H:%M:%S"))
+    _prov_log.addHandler(_prov_handler)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 def _app_dir() -> str:
@@ -216,12 +223,12 @@ PROVIDER_COUNTRIES = {
     "Himalayas":  None,
     "Jooble":     None,
 
-    "BA":         {"de"},
+    "Bundesagentur": {"de"},
     "HeadHunter": {"ru","kz","by","uz","am","az","ge","kg","md","tj","tm"},
     "Arbeitnow":  {"de","at","ch","nl","be","fr","pl","it","es","gb","pt","se","no","dk","fi"},
     "The Muse":   {"us"},
     "RemoteOK":   None,
-    "WWR":        None,
+    "WeWorkRemotely": None,
     "Remotive":   None,
 }
 
@@ -230,7 +237,7 @@ class JobSearchApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("J🔍B Search Tool  —  by Todor Vankov")
-        self.geometry("980x680")
+        self.geometry("1200x680")
         self.configure(bg=BG)
         self.resizable(True, True)
         self.jobs = []
@@ -494,13 +501,13 @@ class JobSearchApp(tk.Tk):
             ("HeadHunter",     "RU/CIS",        self.use_headhunter),
         ]
         providers_no_key = [
-            ("BA",             "DE",            self.use_bundesag, 20),
+            ("Bundesagentur",  "DE",            self.use_bundesag),
             ("Arbeitnow",      "EU",            self.use_arbeitnow),
             ("The Muse",       "USA",           self.use_themuse),
             ("RemoteOK",       "Remote",        self.use_remoteok),
-            ("WWR",            "Remote",        self.use_wwr),
-            ("Remotive",       "Remote",        self.use_remotive, 4),
-            ("HIM",            "Remote",        self.use_himalayas),
+            ("WeWorkRemotely", "Remote",        self.use_wwr),
+            ("Remotive",       "Remote",        self.use_remotive),
+            ("Himalayas",      "Remote",        self.use_himalayas),
         ]
 
         chip_row = tk.Frame(panel, bg=PANEL)
@@ -652,7 +659,7 @@ class JobSearchApp(tk.Tk):
             extra = item[3] if len(item) > 3 else 8
             make_chip(chip_row_nokey, label, note, var, padx=extra, ready=True).pack(side="left", padx=(0, 4))
 
-        tk.Label(panel, text="⚠  RemoteOK & WWR: job data accessed via public RSS feeds for personal use only.",
+        tk.Label(panel, text="⚠  RemoteOK & WeWorkRemotely: job data accessed via public RSS feeds for personal use only.",
                  bg=PANEL, fg="#475569", font=("Segoe UI", 8)).pack(anchor="w", padx=20, pady=(4, 6))
 
         # update chips whenever country changes
@@ -769,7 +776,7 @@ class JobSearchApp(tk.Tk):
         self.file_listbox.bind("<<TreeviewSelect>>", self._load_saved_file)
 
         btn_left = tk.Frame(left, bg=PANEL)
-        btn_left.pack(pady=(0, 10))
+        btn_left.pack(pady=(6, 1))
         self._btn(btn_left, "Add to Auto Run", self._add_saved_to_autorun,
                   color="#0f766e", w=14).pack(side="left", padx=(8, 4))
         self._btn(btn_left, "Delete", self._delete_saved_file,
@@ -783,11 +790,30 @@ class JobSearchApp(tk.Tk):
                                    bg=BG, fg=SUBTEXT, font=("Segoe UI", 9))
         self.saved_info.pack(anchor="w", padx=12, pady=(10, 4))
 
-        cols = ("title", "company", "location", "salary_min", "salary_max", "posted", "url")
-        self.saved_tree = ttk.Treeview(right, columns=cols, show="headings", selectmode="browse",
-                                       style="Treeview")
+        # Action bar below the table: [ output field .......... ] [Check online]
+        saved_footer = tk.Frame(right, bg=BG)
+        saved_footer.pack(side="bottom", fill="x", padx=8, pady=(0, 2))
+        self._check_btn = self._btn(saved_footer, "🌐  Check online", self._check_online,
+                                    color=ACCENT, w=15)
+        self._check_btn.pack(side="right")
+        # Output field (left) — several coloured labels so online/gone/unknown
+        # can be green/red/white (Tk renders colour emoji grey, so no dots here).
+        self._check_out = tk.Frame(saved_footer, bg=BG)
+        self._check_out.pack(side="left", fill="x", expand=True, padx=(2, 10))
+
+        cols = ("applied", "delete", "title", "company", "location",
+                "salary_min", "salary_max", "posted", "url")
+        # "tree headings" enables the #0 icon column, which is the only place a
+        # ttk.Treeview can show a per-row COLOUR — used here for the status dot.
+        self.saved_tree = ttk.Treeview(right, columns=cols, show="tree headings",
+                                       selectmode="browse", style="Treeview")
+        self._build_status_images()
+        self.saved_tree.heading("#0", text="Live")
+        self.saved_tree.column("#0", width=46, minwidth=40, anchor="center", stretch=False)
 
         self._saved_col_labels = {
+            "applied":    "Applied",
+            "delete":     "🗑",
             "title":      "Job Title",
             "company":    "Company",
             "location":   "Location",
@@ -799,6 +825,8 @@ class JobSearchApp(tk.Tk):
         self._saved_sort = {"col": None, "rev": False}
 
         for col, (label, width) in {
+            "applied":    ("Applied",      64),
+            "delete":     ("🗑",           40),
             "title":      ("Job Title",   300),
             "company":    ("Company",     150),
             "location":   ("Location",    120),
@@ -811,9 +839,14 @@ class JobSearchApp(tk.Tk):
                 command=lambda c=col: self._sort_treeview(
                     self.saved_tree, c, self._saved_col_labels, self._saved_sort))
             self.saved_tree.column(col, width=width, anchor="w")
+        # Action columns: narrow, centered, non-stretching
+        self.saved_tree.column("applied", width=64, minwidth=56, anchor="center", stretch=False)
+        self.saved_tree.column("delete",  width=40, minwidth=34, anchor="center", stretch=False)
 
         self.saved_tree.tag_configure("odd",  background=ROW_ODD)
         self.saved_tree.tag_configure("even", background=ROW_EVEN)
+        # Applied jobs are shown greyed out
+        self.saved_tree.tag_configure("applied", foreground="#64748b")
 
         sb_y = ttk.Scrollbar(right, orient="vertical",   command=self.saved_tree.yview)
         sb_x = ttk.Scrollbar(right, orient="horizontal", command=self.saved_tree.xview)
@@ -822,7 +855,15 @@ class JobSearchApp(tk.Tk):
         sb_x.pack(side="bottom", fill="x")
         self.saved_tree.pack(fill="both", expand=True, padx=(8, 0), pady=(0, 8))
         self.saved_tree.bind("<Double-1>", self._open_saved_link)
+        # Click the ✓ column to mark/unmark a job as applied-to
+        self.saved_tree.bind("<Button-1>", self._toggle_applied, add="+")
+        # Hand cursor over the ✓ column so it reads as clickable
+        self.saved_tree.bind("<Motion>", self._saved_hover)
 
+        self._applied_urls = self._load_applied()
+        self._deleted_urls = self._load_deleted()
+        self._job_status = {}   # url -> "online"/"offline"/"unknown" (this session)
+        self._current_saved_path = None
         self._saved_files = {}  # display_name -> full_path
         self._refresh_saved_list()
 
@@ -854,6 +895,7 @@ class JobSearchApp(tk.Tk):
         if not path or not os.path.exists(path):
             return
 
+        self._current_saved_path = path
         self._saved_sort = {"col": None, "rev": False}
         for c, lbl in self._saved_col_labels.items():
             self.saved_tree.heading(c, text=lbl)
@@ -867,14 +909,24 @@ class JobSearchApp(tk.Tk):
                 return
             ws = wb["Job Results"]
             rows = list(ws.iter_rows(min_row=2, values_only=True))
+            # Skip blank rows (e.g. phantom rows left by openpyxl after a delete)
+            rows = [r for r in rows
+                    if r and any(str(x).strip() for x in (r[0], r[1], r[6]))]
             for i, r in enumerate(rows):
                 title, company, location, sal_min, sal_max, posted, url = (
                     (r[0] or ""), (r[1] or ""), (r[2] or ""),
                     (r[3] or ""), (r[4] or ""), (r[5] or ""), (r[6] or ""))
-                self.saved_tree.insert("", "end", iid=str(i),
-                                       tags=("odd" if i % 2 else "even",),
-                                       values=(title, company, location,
-                                               sal_min, sal_max, posted, url))
+                applied = str(url) in self._applied_urls
+                cached  = self._job_status.get(str(url))
+                tags = ["odd" if i % 2 else "even"]
+                if applied:
+                    tags.append("applied")
+                self.saved_tree.insert(
+                    "", "end", iid=str(i), tags=tuple(tags),
+                    image=self._status_imgs.get(cached, ""),
+                    values=("☑" if applied else "☐", "🗑",
+                            title, company, location,
+                            sal_min, sal_max, posted, url))
             wb.close()
             self.saved_info.config(
                 text=f"{label}  —  {len(rows)} jobs  |  {path}", fg=SUBTEXT)
@@ -953,12 +1005,254 @@ class JobSearchApp(tk.Tk):
         _save_config({"searches": filtered})
         self._autorun_refresh()
 
+    _STATUS_COLORS = {"online": "#22c55e", "offline": "#ef4444", "unknown": "#94a3b8"}
+
+    def _build_status_images(self):
+        """Build small coloured-dot images for the #0 status column so only the
+        dot is coloured (a ttk.Treeview cannot colour an individual text cell).
+
+        The image uses an opaque row-coloured background because Tk fills the
+        transparent parts of a Treeview image with black, which would otherwise
+        show a dark box around the dot.
+        """
+        self._status_imgs = {}
+        if not _PIL:
+            return
+        from PIL import Image, ImageDraw
+        def _rgb(h):
+            return tuple(int(h[j:j + 2], 16) for j in (1, 3, 5))
+        bg = _rgb(ROW_ODD) + (255,)
+        s  = 4  # supersample for smooth (anti-aliased) circles
+        for name, col in self._STATUS_COLORS.items():
+            big = Image.new("RGBA", (16 * s, 16 * s), bg)
+            ImageDraw.Draw(big).ellipse((3 * s, 3 * s, 12 * s, 12 * s), fill=_rgb(col) + (255,))
+            img = big.resize((16, 16), Image.LANCZOS)
+            self._status_imgs[name] = ImageTk.PhotoImage(img)
+
     def _open_saved_link(self, event=None):
+        # Don't open a link when clicking the status dot / ✓ / 🗑 columns
+        if event is not None and self.saved_tree.identify_column(event.x) in ("#0", "#1", "#2"):
+            return
         sel = self.saved_tree.selection()
         if sel:
-            url = self.saved_tree.item(sel[0])["values"][6]
+            url = self.saved_tree.item(sel[0])["values"][8]
             if url:
                 webbrowser.open(str(url))
+
+    # ── Online status check ───────────────────────────────────────────────────
+    # Browser-like headers — a plain User-Agent gets 403-blocked by many job
+    # boards (Adzuna etc.), which would show up as false "unknown" results.
+    _PROBE_HEADERS = {
+        "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                       "AppleWebKit/537.36 (KHTML, like Gecko) "
+                       "Chrome/122.0.0.0 Safari/537.36"),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "de-DE,de;q=0.9,en;q=0.8",
+    }
+
+    def _probe_url(self, url):
+        """Return 'online' / 'offline' / 'unknown' for a single job URL."""
+        try:
+            r = requests.get(url, timeout=8, allow_redirects=True,
+                             headers=self._PROBE_HEADERS)
+        except requests.exceptions.RequestException:
+            return "unknown"          # timeout / connection error → can't tell
+        code = r.status_code
+        if code in (404, 410):
+            return "offline"          # page gone
+        if code == 200:
+            # Redirect to a generic landing/home page usually means the posting
+            # expired and bounced — treat that as uncertain.
+            if r.history:
+                try:
+                    from urllib.parse import urlparse
+                    p = urlparse(r.url).path.strip("/")
+                    if not p or len(p) < 4:
+                        return "unknown"
+                except Exception:
+                    pass
+            return "online"
+        return "unknown"              # 403 / 429 / 5xx / other → uncertain
+
+    def _check_online(self):
+        """Ping every loaded job's URL in the background and show a status dot."""
+        rows  = list(self.saved_tree.get_children())
+        items = [(iid, str(self.saved_tree.set(iid, "url"))) for iid in rows]
+        items = [(iid, u) for iid, u in items if u]
+        if not items:
+            self._set_check_out([("No jobs to check.", SUBTEXT)])
+            return
+        self._check_btn.config(state="disabled")
+        self._set_check_out([(f"Checking… 0/{len(items)}", SUBTEXT)])
+        total = len(items)
+        done  = [0]
+
+        def worker():
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                futs = {pool.submit(self._probe_url, u): (iid, u) for iid, u in items}
+                for fut in as_completed(futs):
+                    iid, u = futs[fut]
+                    try:
+                        status = fut.result()
+                    except Exception:
+                        status = "unknown"
+                    self._job_status[u] = status
+                    done[0] += 1
+                    self.after(0, self._apply_status, iid, status, done[0], total)
+            self.after(0, self._check_done, total)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _set_check_out(self, segments):
+        """Render the footer output field as coloured text segments."""
+        for w in self._check_out.winfo_children():
+            w.destroy()
+        for text, color in segments:
+            tk.Label(self._check_out, text=text, bg=BG, fg=color,
+                     font=("Segoe UI", 9)).pack(side="left")
+
+    def _apply_status(self, iid, status, done, total):
+        try:
+            if self.saved_tree.exists(iid):
+                self.saved_tree.item(iid, image=self._status_imgs.get(status, ""))
+        except Exception:
+            pass
+        try:
+            self._set_check_out([(f"Checking… {done}/{total}", SUBTEXT)])
+        except Exception:
+            pass
+
+    def _check_done(self, total):
+        # Count only the rows of the file that was just checked.
+        urls = [str(self.saved_tree.set(iid, "url"))
+                for iid in self.saved_tree.get_children()]
+        online  = sum(1 for u in urls if self._job_status.get(u) == "online")
+        offline = sum(1 for u in urls if self._job_status.get(u) == "offline")
+        unknown = sum(1 for u in urls if self._job_status.get(u) == "unknown")
+        self._check_btn.config(state="normal")
+        self._set_check_out([
+            (f"Checked {total}   ", SUBTEXT),
+            (f"● {online} online",  "#22c55e"),
+            ("   ",                 SUBTEXT),
+            (f"● {offline} gone",   "#ef4444"),
+            ("   ",                 SUBTEXT),
+            (f"● {unknown} unknown", TEXT),
+        ])
+
+    def _saved_hover(self, event):
+        """Show a hand cursor over the ✓ / 🗑 columns so they look clickable."""
+        region = self.saved_tree.identify_region(event.x, event.y)
+        col    = self.saved_tree.identify_column(event.x)
+        want   = "hand2" if (region == "cell" and col in ("#1", "#2")) else ""
+        if getattr(self, "_saved_cursor", None) != want:
+            self.saved_tree.config(cursor=want)
+            self._saved_cursor = want
+
+    def _applied_path(self):
+        return os.path.join(_app_dir(), "applied.json")
+
+    def _load_applied(self):
+        """Load the set of job URLs the user marked as applied-to."""
+        try:
+            with open(self._applied_path(), encoding="utf-8") as f:
+                return set(json.load(f))
+        except Exception:
+            return set()
+
+    def _save_applied(self):
+        try:
+            with open(self._applied_path(), "w", encoding="utf-8") as f:
+                json.dump(sorted(self._applied_urls), f, ensure_ascii=False, indent=0)
+        except Exception:
+            pass
+
+    def _toggle_applied(self, event):
+        """Dispatch clicks on the action columns: ✓ toggles applied, 🗑 deletes."""
+        if self.saved_tree.identify_region(event.x, event.y) != "cell":
+            return
+        col = self.saved_tree.identify_column(event.x)
+        if col not in ("#1", "#2"):
+            return  # a data column → let normal selection happen
+        iid = self.saved_tree.identify_row(event.y)
+        if not iid:
+            return
+        if col == "#2":
+            self._delete_saved_job(iid)
+            return "break"
+        # ── ✓ applied toggle ──────────────────────────────────────────────────
+        url  = str(self.saved_tree.set(iid, "url"))
+        tags = [t for t in self.saved_tree.item(iid, "tags") if t != "applied"]
+        if url in self._applied_urls:
+            self._applied_urls.discard(url)
+            self.saved_tree.set(iid, "applied", "☐")
+        else:
+            if url:
+                self._applied_urls.add(url)
+            tags.append("applied")
+            self.saved_tree.set(iid, "applied", "☑")
+        self.saved_tree.item(iid, tags=tuple(tags))
+        self._save_applied()
+        return "break"
+
+    def _deleted_path(self):
+        return os.path.join(_app_dir(), "deleted.json")
+
+    def _load_deleted(self):
+        """Load the set of job URLs the user permanently deleted (tombstones)."""
+        try:
+            with open(self._deleted_path(), encoding="utf-8") as f:
+                return set(json.load(f))
+        except Exception:
+            return set()
+
+    def _save_deleted(self):
+        try:
+            with open(self._deleted_path(), "w", encoding="utf-8") as f:
+                json.dump(sorted(self._deleted_urls), f, ensure_ascii=False, indent=0)
+        except Exception:
+            pass
+
+    def _delete_saved_job(self, iid):
+        """Permanently remove a job: delete its row from the Excel file and add
+        its URL to deleted.json so it is never re-added by a future run."""
+        title = str(self.saved_tree.set(iid, "title"))
+        url   = str(self.saved_tree.set(iid, "url"))
+        if not messagebox.askyesno(
+                "Delete job",
+                f"Delete this job permanently?\n\n{title}\n\n"
+                "It will be removed from the saved file and won't be re-added "
+                "by future searches."):
+            return
+
+        path = self._current_saved_path
+        removed = False
+        if path and os.path.exists(path):
+            try:
+                wb = load_workbook(path)
+                ws = wb["Job Results"]
+                for ridx in range(ws.max_row, 1, -1):   # bottom-up: safe deletion
+                    if str(ws.cell(ridx, 7).value or "") == url:
+                        ws.delete_rows(ridx, 1)
+                        removed = True
+                wb.save(path)
+                wb.close()
+            except Exception as e:
+                messagebox.showerror("Delete failed", f"Could not update the file:\n{e}")
+                return
+
+        if url:
+            self._deleted_urls.add(url)
+            self._save_deleted()
+        self.saved_tree.delete(iid)
+
+        # refresh the job-count line
+        info = self.saved_info.cget("text")
+        try:
+            remaining = len(self.saved_tree.get_children())
+            label = info.split("  —  ")[0]
+            self.saved_info.config(text=f"{label}  —  {remaining} jobs  |  {path}")
+        except Exception:
+            pass
 
     # ── Auto Run Panel ────────────────────────────────────────────────────────
     def _settings_panel(self):
@@ -1406,8 +1700,33 @@ class JobSearchApp(tk.Tk):
                                     font=("Segoe UI", 8))
         self._stat_trend.pack(side="right")
         self.chart_trend = tk.Frame(trend_wrapper, bg=PANEL, height=180)
-        self.chart_trend.pack(fill="x", pady=(4, 12))
+        self.chart_trend.pack(fill="x", pady=(4, 4))
         self.chart_trend.pack_propagate(False)
+
+        # ── Zoom controls (From/To range slider) for the trend chart ──────────
+        self._trend_ctrl = tk.Frame(trend_wrapper, bg=PANEL)  # packed when data loads
+        _sc_opts = dict(orient="horizontal", showvalue=False,
+                        command=self._trend_zoom_light, length=180, width=14,
+                        bg=ACCENT2, fg=TEXT, troughcolor="#0f2744",
+                        highlightthickness=0, sliderrelief="raised",
+                        activebackground="#7dd3fc", borderwidth=1)
+        tk.Label(self._trend_ctrl, text="From", bg=PANEL, fg=SUBTEXT,
+                 font=("Segoe UI", 8)).grid(row=0, column=0, padx=(0, 4))
+        self._trend_from = tk.Scale(self._trend_ctrl, from_=0, to=0, **_sc_opts)
+        self._trend_from.grid(row=0, column=1, padx=(0, 12))
+        tk.Label(self._trend_ctrl, text="To", bg=PANEL, fg=SUBTEXT,
+                 font=("Segoe UI", 8)).grid(row=0, column=2, padx=(0, 4))
+        self._trend_to = tk.Scale(self._trend_ctrl, from_=0, to=0, **_sc_opts)
+        self._trend_to.grid(row=0, column=3, padx=(0, 12))
+        # Heavy re-render (static image mode) only fires on release, not per tick
+        self._trend_from.bind("<ButtonRelease-1>", self._trend_zoom_commit)
+        self._trend_to.bind("<ButtonRelease-1>", self._trend_zoom_commit)
+        self._trend_range_lbl = tk.Label(self._trend_ctrl, text="", bg=PANEL,
+                                         fg=ACCENT2, font=("Segoe UI", 8, "bold"))
+        self._trend_range_lbl.grid(row=0, column=4, padx=(4, 12))
+        tk.Button(self._trend_ctrl, text="⟲ Reset", command=self._reset_trend_zoom,
+                  bg="#334155", fg=TEXT, font=("Segoe UI", 8), relief="flat",
+                  cursor="hand2", padx=8, pady=1).grid(row=0, column=5)
 
         self._analytics_populate_files()
 
@@ -1598,7 +1917,7 @@ class JobSearchApp(tk.Tk):
         self._stat_salary_trend.config(text=f"{months[0]} → {months[-1]}" if len(months) >= 2 else "")
         self._stat_source.config(text=f"top: {top_src[0][0]}" if top_src else "")
         self._stat_keywords.config(text=f"{len(keywords)} terms" if keywords else "")
-        self._stat_trend.config(text=f"{len(dates)} points · {weeks} weeks" if dates else "")
+        self._stat_trend.config(text=f"{len(dates)} jobs · {weeks} months" if dates else "")
 
         if _labels_only:
             return  # PIL path: images already displayed, only labels needed
@@ -1797,6 +2116,15 @@ class JobSearchApp(tk.Tk):
         show(self.chart_source,       "source")
         show(self.chart_keywords,     "keywords")
         show(self.chart_trend,        "trend")
+
+        # Wire the zoom slider in image mode: dragging re-renders the trend PNG
+        # for the selected range (no live TkAgg canvas — that caused Tk/thread
+        # shutdown errors when mixed with the static-image analytics view).
+        m_dates, m_counts = self._aggregate_trend_months(data.get("dates", []))
+        self._trend_mode = "image"
+        self._trend_ax = None
+        self._trend_canvas = None
+        self._setup_trend_slider(m_dates, m_counts)
 
         if hasattr(self, "_analytics_loading_lbl"):
             self._analytics_loading_lbl.config(text="")
@@ -2234,15 +2562,29 @@ class JobSearchApp(tk.Tk):
         ax.set_xlabel("Occurrences", fontsize=8)
         plt.tight_layout(); canvas.draw()
 
-    def _draw_trend(self, dates):
-        fig, ax, canvas = self._make_fig(self.chart_trend, figsize=(10, 2.2))
-        if not dates: return self._no_data(ax, canvas, "Jobs Added Over Time")
-        weekly = defaultdict(int)
+    @staticmethod
+    def _aggregate_trend_months(dates):
+        """Aggregate a list of datetimes into (month_datetimes, counts)."""
+        if not dates:
+            return [], []
+        monthly = defaultdict(int)
         for d in dates:
-            weekly[d.strftime("%Y-%m")] += 1
-        sorted_weeks = sorted(weekly.keys())
-        week_dates = [datetime.strptime(w, "%Y-%m") for w in sorted_weeks]
-        counts     = [weekly[w] for w in sorted_weeks]
+            monthly[d.strftime("%Y-%m")] += 1
+        keys = sorted(monthly.keys())
+        return [datetime.strptime(k, "%Y-%m") for k in keys], [monthly[k] for k in keys]
+
+    def _draw_trend(self, dates):
+        # Live TkAgg path (used only when Pillow is unavailable). Close the
+        # previous figure so repeated loads don't leak figures.
+        if getattr(self, "_trend_fig", None) is not None:
+            try: plt.close(self._trend_fig)
+            except Exception: pass
+        fig, ax, canvas = self._make_fig(self.chart_trend, figsize=(10, 2.2))
+        self._trend_fig = fig
+        if not dates:
+            self._trend_ctrl.pack_forget()
+            return self._no_data(ax, canvas, "Jobs Added Over Time")
+        week_dates, counts = self._aggregate_trend_months(dates)
         ax.fill_between(week_dates, counts, color="#0ea5e9", alpha=0.3)
         ax.plot(week_dates, counts, color="#38bdf8", linewidth=1.5, marker="o",
                 markersize=4, markerfacecolor="#0ea5e9")
@@ -2252,6 +2594,164 @@ class JobSearchApp(tk.Tk):
         ax.set_title("Jobs Added Over Time", fontsize=10, pad=8)
         ax.set_ylabel("New Jobs", fontsize=8)
         plt.tight_layout(); canvas.draw()
+
+        self._trend_mode   = "live"
+        self._trend_ax     = ax
+        self._trend_canvas = canvas
+        self._setup_trend_slider(week_dates, counts)
+
+    def _setup_trend_slider(self, month_dates, counts):
+        """Configure the From/To sliders for the given monthly series and show
+        the zoom controls (only when there is more than one month)."""
+        self._trend_month_dates = month_dates
+        self._trend_counts      = counts
+        n = len(month_dates)
+        if n > 1:
+            self._trend_from.config(to=n - 1)
+            self._trend_to.config(to=n - 1)
+            self._trend_from.set(0)
+            self._trend_to.set(n - 1)
+            self._trend_range_lbl.config(
+                text=f"{month_dates[0]:%b '%y} → {month_dates[-1]:%b '%y}")
+            self._trend_ctrl.pack(fill="x", padx=14, pady=(0, 12))
+        else:
+            self._trend_ctrl.pack_forget()
+
+    def _trend_window(self):
+        """Return the (lo, hi) month indices currently selected on the sliders."""
+        months = getattr(self, "_trend_month_dates", None)
+        if not months:
+            return None
+        n = len(months)
+        lo = max(0, min(self._trend_from.get(), n - 1))
+        hi = max(0, min(self._trend_to.get(),   n - 1))
+        if lo > hi:                      # handles crossed → swap for a valid window
+            lo, hi = hi, lo
+        return lo, hi
+
+    def _trend_zoom_light(self, _=None):
+        """Fires on every slider tick: update the label and refresh the chart.
+        In live (TkAgg) mode this is a cheap set_xlim; in image mode it requests
+        a throttled background re-render so dragging stays interactive."""
+        win = self._trend_window()
+        if not win:
+            return
+        lo, hi = win
+        months = self._trend_month_dates
+        self._trend_range_lbl.config(text=f"{months[lo]:%b '%y} → {months[hi]:%b '%y}")
+        # Top-right stat reflects the zoomed window (jobs + months in range)
+        if hasattr(self, "_stat_trend"):
+            window_jobs = sum(self._trend_counts[lo:hi + 1])
+            self._stat_trend.config(text=f"{window_jobs} jobs · {hi - lo + 1} months")
+        if getattr(self, "_trend_mode", "") == "live" and self._trend_ax is not None:
+            pad = timedelta(days=15)
+            self._trend_ax.set_xlim(months[lo] - pad, months[hi] + pad)
+            window = self._trend_counts[lo:hi + 1]
+            self._trend_ax.set_ylim(0, (max(window) if window else 1) * 1.15 + 1)
+            self._trend_canvas.draw_idle()
+        else:
+            self._request_trend_render()
+
+    def _trend_zoom_commit(self, _=None):
+        """Fires on slider release: ensure a final render at the exact position."""
+        if getattr(self, "_trend_mode", "") == "image":
+            self._request_trend_render()
+
+    def _request_trend_render(self):
+        """Render the current trend window to an image in a background thread.
+        Only one render runs at a time; drags that arrive while a render is in
+        flight are coalesced so the newest slider position is rendered next.
+        This keeps the main thread responsive during dragging."""
+        if getattr(self, "_trend_rendering", False):
+            self._trend_render_dirty = True
+            return
+        win = self._trend_window()
+        if not win:
+            return
+        self._trend_rendering = True
+        self._trend_render_dirty = False
+        lo, hi = win
+        months, counts = self._trend_month_dates, self._trend_counts
+
+        def work():
+            try:
+                img = self._render_trend_image(months, counts, lo, hi)
+            except Exception:
+                img = None
+
+            def done():
+                self._trend_rendering = False
+                if img is not None and not getattr(self, "_analytics_cancel", False):
+                    try:
+                        self._show_trend_image(img)
+                    except Exception:
+                        pass
+                if getattr(self, "_trend_render_dirty", False):
+                    self._request_trend_render()   # render the latest position
+            try:
+                self.after(0, done)
+            except Exception:
+                self._trend_rendering = False
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _reset_trend_zoom(self):
+        """Restore the full time range on the trend chart."""
+        months = getattr(self, "_trend_month_dates", None)
+        if not months:
+            return
+        n = len(months)
+        self._trend_from.set(0)
+        self._trend_to.set(n - 1)
+        self._trend_zoom_light()
+
+    def _render_trend_image(self, month_dates, counts, lo, hi):
+        """Render the trend chart for months[lo:hi+1] to a PIL image using the
+        Agg backend (no Tk objects — safe and leak-free)."""
+        if not _PIL:
+            return None
+        BG = "#1e293b"; AX = "#0f172a"; SUB = "#94a3b8"; GRD = "#334155"
+        md = month_dates[lo:hi + 1]
+        cn = counts[lo:hi + 1]
+        fig = Figure(figsize=(11, 1.8), facecolor=BG)
+        FigureCanvasAgg(fig)
+        ax = fig.add_subplot(111)
+        ax.set_facecolor(AX)
+        ax.tick_params(colors=SUB, labelsize=8)
+        for sp in ax.spines.values(): sp.set_color(GRD)
+        ax.yaxis.label.set_color(SUB)
+        if md:
+            ax.fill_between(md, cn, color="#0ea5e9", alpha=0.3)
+            ax.plot(md, cn, color="#38bdf8", linewidth=1.5, marker="o",
+                    markersize=4, markerfacecolor="#0ea5e9")
+            ax.xaxis.set_major_formatter(mdates.DateFormatter("%b '%y"))
+            ax.xaxis.set_major_locator(mdates.MonthLocator())
+            for lbl in ax.get_xticklabels(): lbl.set_rotation(30); lbl.set_ha("right")
+            ax.set_ylabel("New Jobs", fontsize=8)
+            ax.set_ylim(0, (max(cn) if cn else 1) * 1.15 + 1)
+        fig.tight_layout()
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", dpi=100, bbox_inches="tight", facecolor=BG)
+        buf.seek(0)
+        img = Image.open(buf).copy()
+        buf.close()
+        return img
+
+    def _show_trend_image(self, img):
+        """Display a rendered trend PIL image in the trend chart frame."""
+        if not hasattr(self, "_pil_refs"):
+            self._pil_refs = {}
+        frame = self.chart_trend
+        for w in frame.winfo_children():
+            w.destroy()
+        fw = frame.winfo_width()  or img.width
+        fh = frame.winfo_height() or img.height
+        img_r = img.copy()
+        img_r.thumbnail((fw, fh), Image.LANCZOS)
+        photo = ImageTk.PhotoImage(img_r)
+        self._pil_refs["trend"] = photo
+        tk.Label(frame, image=photo, bg="#1e293b", anchor="center").pack(
+            fill="both", expand=True)
 
     # ── Credentials Panel ─────────────────────────────────────────────────────
     def _credentials_panel(self):
@@ -3186,9 +3686,15 @@ class JobSearchApp(tk.Tk):
         col_names = list(col_labels.keys())
         col_idx   = col_names.index(col)
 
-        rows = [tree.item(iid)["values"] for iid in tree.get_children()]
+        # Keep each row's values, its non-striping tags (applied), and its #0
+        # status-dot image so all survive re-sorting.
+        rows = [(tree.item(iid)["values"],
+                 [t for t in tree.item(iid)["tags"] if t not in ("odd", "even")],
+                 tree.item(iid)["image"])
+                for iid in tree.get_children()]
 
-        def _key(vals):
+        def _key(row):
+            vals = row[0]
             v = vals[col_idx] if col_idx < len(vals) else ""
             try:
                 return (0, float(str(v).replace(",", "").replace(" ", "")))
@@ -3203,10 +3709,10 @@ class JobSearchApp(tk.Tk):
 
         for iid in tree.get_children():
             tree.delete(iid)
-        for i, vals in enumerate(rows):
+        for i, (vals, keep_tags, image) in enumerate(rows):
             tree.insert("", "end", iid=str(i),
-                        tags=("odd" if i % 2 else "even",),
-                        values=vals)
+                        tags=("odd" if i % 2 else "even", *keep_tags),
+                        image=image, values=vals)
 
     # ── Search ────────────────────────────────────────────────────────────────
     def _search(self):
@@ -3233,107 +3739,61 @@ class JobSearchApp(tk.Tk):
             "remotive":  self.use_remotive.get(),
             "himalayas": self.use_himalayas.get(),
         }
-        creds = {
-            "adzuna_id":   self.app_id_var.get().strip(),
-            "adzuna_key":  self.app_key_var.get().strip(),
-            "reed_key":    self.reed_key_var.get().strip(),
-        }
         cfg = _load_config()
 
         if not any(use.values()):
             self._set_status("Select at least one provider.", ok=False)
             return
 
+        # Credentials: live entry fields override saved config where present.
+        creds = {
+            "adzuna_id":       self.app_id_var.get().strip(),
+            "adzuna_key":      self.app_key_var.get().strip(),
+            "reed_key":        self.reed_key_var.get().strip(),
+            "findwork_key":    cfg.get("findwork_key", ""),
+            "jooble_key":      cfg.get("jooble_key", ""),
+            "hh_token":        cfg.get("hh_token", ""),
+            "themuse_key":     cfg.get("themuse_key", ""),
+        }
+        tasks = build_provider_tasks(
+            use=use, creds=creds, what=what, where=where, country=country,
+            results=results, sort_by="relevance",
+            salary_min=salary_min, salary_max=salary_max,
+            full_time=full_time, permanent=permanent)
+        if not tasks:
+            self._on_search_done([], [], what)
+            return
+
         self._search_btn.config(state="disabled")
         self._empty_state.place_forget()
-        self._set_status("Searching…")
+        self._set_status(f"Searching {len(tasks)} providers…")
 
         def _bg():
-            all_jobs    = []
-            seen_urls   = set()
-            auth_errors = []
+            auth_errors     = []
+            results_by_name = {}
+            done            = [0]
 
-            def _add(jobs):
-                for j in jobs:
-                    if len(all_jobs) >= results:
-                        break
-                    if j["url"] and j["url"] in seen_urls:
-                        continue
-                    if j["url"]:
-                        seen_urls.add(j["url"])
-                    all_jobs.append(j)
+            # Fetch all providers concurrently
+            with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
+                futures = {pool.submit(fn): name for name, fn in tasks}
+                for fut in as_completed(futures):
+                    name = futures[fut]
+                    done[0] += 1
+                    self.after(0, self._set_status,
+                               f"Searching… ({done[0]}/{len(tasks)} providers)")
+                    try:
+                        results_by_name[name] = fut.result()
+                    except AuthError:
+                        auth_errors.append(name)
+                        results_by_name[name] = []
+                    except Exception:
+                        results_by_name[name] = []
 
-            def _fetch(name, fn):
-                if len(all_jobs) >= results:
-                    return
-                self.after(0, self._set_status,
-                           f"Searching {name}…  ({len(all_jobs)} so far)")
-                try:
-                    _add(fn())
-                except AuthError:
-                    auth_errors.append(name)
+            # Merge in task order so provider priority is preserved, then cap
+            merged = dedup_jobs(
+                [results_by_name.get(name, []) for name, _fn in tasks], cap=results)
 
-            try:
-                if use["adzuna"]:
-                    _fetch("Adzuna", lambda: AdzunaProvider(
-                        creds["adzuna_id"], creds["adzuna_key"],
-                    ).search(what, where, country=country, results=results,
-                             sort_by="relevance",
-                             salary_min=salary_min, salary_max=salary_max,
-                             full_time=full_time, permanent=permanent))
-
-                if use["reed"]:
-                    _fetch("Reed", lambda: ReedProvider(
-                        creds["reed_key"]).search(what, where, results=results))
-
-                if use["findwork"]:
-                    _fetch("Findwork", lambda: FindworkProvider(
-                        cfg.get("findwork_key", "")).search(what, where, results=results))
-
-                if use["jooble"]:
-                    _fetch("Jooble", lambda: JoobleProvider(
-                        cfg.get("jooble_key", "")).search(what, where, results=results))
-
-                if use["arbeitnow"]:
-                    _fetch("Arbeitnow", lambda: ArbeitnowProvider().search(
-                        what, where, results=results))
-
-                if use["bundesag"]:
-                    _fetch("Bundesagentur", lambda: BundesagenturProvider().search(
-                        what, where, results=results))
-
-                if use["remoteok"]:
-                    _fetch("RemoteOK", lambda: RemoteOKProvider().search(
-                        what, where, results=results))
-
-                if use["themuse"]:
-                    _fetch("The Muse", lambda: TheMuseProvider(
-                        cfg.get("themuse_key", "")).search(what, where, results=results))
-
-                if use["headhunter"]:
-                    _fetch("HeadHunter", lambda: HeadHunterProvider(
-                        cfg.get("hh_token", "")).search(what, where, results=results))
-
-                if use["wwr"]:
-                    _fetch("WWR", lambda: WeWorkRemotelyProvider().search(
-                        what, where, results=results))
-
-                if use["remotive"]:
-                    _fetch("Remotive", lambda: RemotiveProvider().search(
-                        what, where, results=results))
-
-                if use["himalayas"]:
-                    _fetch("Himalayas", lambda: HimalayasProvider().search(
-                        what, where, results=results))
-
-            except requests.exceptions.ConnectionError:
-                self.after(0, self._on_search_error, "No internet connection")
-                return
-            except Exception as e:
-                self.after(0, self._on_search_error, f"Error: {e}")
-                return
-
-            self.after(0, self._on_search_done, all_jobs[:results], auth_errors, what)
+            self.after(0, self._on_search_done, merged, auth_errors, what)
 
         threading.Thread(target=_bg, daemon=True).start()
 
@@ -3436,9 +3896,10 @@ class JobSearchApp(tk.Tk):
         added = skipped = 0
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
 
+        deleted = getattr(self, "_deleted_urls", set())
         for job in self.jobs:
             url = job.get("url", "")
-            if url in existing_urls:
+            if url in existing_urls or url in deleted:
                 skipped += 1
                 continue
             existing_urls.add(url)

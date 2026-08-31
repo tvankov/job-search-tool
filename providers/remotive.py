@@ -1,8 +1,7 @@
-import requests
 import xml.etree.ElementTree as ET
 import re
 from email.utils import parsedate
-from .base import BaseProvider
+from .base import BaseProvider, logger
 
 
 def _parse_rss_date(s):
@@ -37,12 +36,13 @@ class RemotiveProvider(BaseProvider):
         collected  = []
         try:
             for feed_url in _FEEDS:
-                resp = requests.get(
+                resp = self._request(
+                    "get",
                     feed_url,
                     headers={"User-Agent": "JobSearchTool/1.0"},
                     timeout=15,
                 )
-                if resp.status_code != 200:
+                if resp is None or resp.status_code != 200:
                     continue
                 root = ET.fromstring(resp.content)
                 for item in root.findall(".//item"):
@@ -59,8 +59,8 @@ class RemotiveProvider(BaseProvider):
                     collected.append(self._normalize(item))
                 if len(collected) >= results:
                     break
-        except Exception:
-            pass
+        except ET.ParseError as exc:  # malformed RSS/XML
+            logger.warning("%s: bad XML — %s", self.name, exc)
         return collected[:results]
 
     def _normalize(self, item):

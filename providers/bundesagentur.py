@@ -1,5 +1,4 @@
-import requests
-from .base import BaseProvider
+from .base import BaseProvider, logger
 
 _HEADERS = {
     "X-API-Key": "jobboerse-jobsuche",
@@ -20,7 +19,9 @@ class BundesagenturProvider(BaseProvider):
                 params = {"page": page, "size": _PAGE_SIZE}
                 if what.strip(): params["was"] = what.strip()
                 if where.strip(): params["wo"]  = where.strip()
-                resp = requests.get(_URL, params=params, headers=_HEADERS, timeout=10)
+                resp = self._request("get", _URL, params=params, headers=_HEADERS)
+                if resp is None:
+                    break
                 if resp.status_code != 200:
                     break
                 batch = resp.json().get("stellenangebote", [])
@@ -31,8 +32,8 @@ class BundesagenturProvider(BaseProvider):
                     break
                 page += 1
             return all_jobs[:results]
-        except Exception:
-            pass
+        except ValueError as exc:  # malformed JSON response
+            logger.warning("%s: bad JSON — %s", self.name, exc)
         return []
 
     def _normalize(self, j):

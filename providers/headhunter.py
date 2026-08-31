@@ -1,5 +1,4 @@
-import requests
-from .base import BaseProvider, AuthError
+from .base import BaseProvider, AuthError, logger
 
 _URL = "https://api.hh.ru/vacancies"
 _HEADERS = {"User-Agent": "JobSearchTool/1.0 (support@jobsearchtool.com)"}
@@ -23,7 +22,9 @@ class HeadHunterProvider(BaseProvider):
                 params = {"area": 113, "per_page": _PER_PAGE, "page": page}
                 if what.strip():
                     params["text"] = what.strip()
-                resp = requests.get(_URL, params=params, headers=headers, timeout=10)
+                resp = self._request("get", _URL, params=params, headers=headers)
+                if resp is None:
+                    break
                 if resp.status_code in (401, 403):
                     raise AuthError("HeadHunter")
                 if resp.status_code != 200:
@@ -38,8 +39,8 @@ class HeadHunterProvider(BaseProvider):
             return all_jobs[:results]
         except AuthError:
             raise
-        except Exception:
-            pass
+        except ValueError as exc:  # malformed JSON response
+            logger.warning("%s: bad JSON — %s", self.name, exc)
         return []
 
     def _normalize(self, j):

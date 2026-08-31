@@ -1,5 +1,4 @@
-import requests
-from .base import BaseProvider
+from .base import BaseProvider, logger
 
 
 class ArbeitnowProvider(BaseProvider):
@@ -13,7 +12,9 @@ class ArbeitnowProvider(BaseProvider):
             where_low = where.lower()
             words     = what_low.split() if what_low else []
             for page in range(1, 51):  # up to 50 pages
-                resp = requests.get(self._URL, params={"page": page}, timeout=10)
+                resp = self._request("get", self._URL, params={"page": page})
+                if resp is None:
+                    break
                 if resp.status_code != 200:
                     break
                 data = resp.json().get("data", [])
@@ -31,8 +32,8 @@ class ArbeitnowProvider(BaseProvider):
                 if len(collected) >= results:
                     break
             return collected[:results]
-        except Exception:
-            pass
+        except ValueError as exc:  # malformed JSON response
+            logger.warning("%s: bad JSON — %s", self.name, exc)
         return []
 
     def _normalize(self, j):

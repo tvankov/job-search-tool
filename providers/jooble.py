@@ -1,5 +1,4 @@
-import requests
-from .base import BaseProvider, AuthError
+from .base import BaseProvider, AuthError, logger
 
 
 class JoobleProvider(BaseProvider):
@@ -23,11 +22,13 @@ class JoobleProvider(BaseProvider):
                     body["keywords"] = what.strip()
                 if where.strip():
                     body["location"] = where.strip()
-                resp = requests.post(
+                resp = self._request(
+                    "post",
                     self._URL.format(key=self.api_key),
                     json=body,
-                    timeout=10,
                 )
+                if resp is None:
+                    break
                 if resp.status_code in (401, 403):
                     raise AuthError("Jooble")
                 if resp.status_code != 200:
@@ -41,8 +42,8 @@ class JoobleProvider(BaseProvider):
                 page += 1
         except AuthError:
             raise
-        except Exception:
-            pass
+        except ValueError as exc:  # malformed JSON response
+            logger.warning("%s: bad JSON — %s", self.name, exc)
         return all_jobs[:results]
 
     def _normalize(self, j):

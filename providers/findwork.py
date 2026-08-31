@@ -1,5 +1,4 @@
-import requests
-from .base import BaseProvider, AuthError
+from .base import BaseProvider, AuthError, logger
 
 
 class FindworkProvider(BaseProvider):
@@ -25,7 +24,9 @@ class FindworkProvider(BaseProvider):
         url = self._URL
         try:
             while url and len(jobs) < results:
-                resp = requests.get(url, params=params, headers=headers, timeout=10)
+                resp = self._request("get", url, params=params, headers=headers)
+                if resp is None:
+                    break
                 if resp.status_code in (401, 403):
                     raise AuthError("Findwork")
                 if resp.status_code != 200:
@@ -36,8 +37,8 @@ class FindworkProvider(BaseProvider):
                 params = {}              # next URL already has all params encoded
         except AuthError:
             raise
-        except Exception:
-            pass
+        except ValueError as exc:  # malformed JSON response
+            logger.warning("%s: bad JSON — %s", self.name, exc)
         return jobs[:results]
 
     def _normalize(self, j):
